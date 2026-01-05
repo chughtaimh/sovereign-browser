@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leave a Suggestion</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html,
+        body {
+            height: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e0e0e0;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            padding: 16px;
+        }
+
+        /* Tab navigation */
+        .tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 16px;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 4px;
+            border-radius: 8px;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 8px 16px;
+            border: none;
+            background: transparent;
+            color: #808090;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .tab:hover {
+            color: #a0a0b0;
+        }
+
+        .tab.active {
+            background: rgba(10, 132, 255, 0.2);
+            color: #0a84ff;
+        }
+
+        h1 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #fff;
+        }
+
+        .subtitle {
+            font-size: 12px;
+            color: #a0a0a0;
+            margin-bottom: 12px;
+        }
+
+        textarea {
+            flex: 1;
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #3a3a5a;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #e0e0e0;
+            font-family: inherit;
+            font-size: 14px;
+            resize: none;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        textarea::placeholder {
+            color: #707090;
+        }
+
+        textarea:focus {
+            border-color: #0a84ff;
+            box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.2);
+        }
+
+        .button-row {
+            display: flex;
+            gap: 10px;
+            margin-top: 12px;
+            justify-content: flex-end;
+        }
+
+        button {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .cancel-btn {
+            background: transparent;
+            border: 1px solid #4a4a6a;
+            color: #a0a0a0;
+        }
+
+        .cancel-btn:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: #6a6a8a;
+        }
+
+        .submit-btn {
+            background: linear-gradient(135deg, #0a84ff, #0066cc);
+            border: none;
+            color: #fff;
+        }
+
+        .submit-btn:hover {
+            background: linear-gradient(135deg, #2196f3, #0a84ff);
+            transform: translateY(-1px);
+        }
+
+        .submit-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Panel visibility */
+        .panel {
+            display: none;
+            flex-direction: column;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .panel.active {
+            display: flex;
+        }
+
+        /* History panel */
+        .history-list {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .history-item {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 12px;
+            border: 1px solid #3a3a5a;
+        }
+
+        .history-text {
+            font-size: 13px;
+            color: #e0e0e0;
+            line-height: 1.4;
+            margin-bottom: 8px;
+        }
+
+        .history-date {
+            font-size: 11px;
+            color: #707090;
+        }
+
+        .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #707090;
+        }
+
+        .empty-icon {
+            font-size: 32px;
+            margin-bottom: 8px;
+        }
+
+        .empty-text {
+            font-size: 13px;
+        }
+
+        .success-message {
+            display: none;
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        .success-message.show {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+        }
+
+        .success-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+
+        .success-text {
+            font-size: 16px;
+            color: #4ade80;
+            margin-bottom: 8px;
+        }
+
+        .success-subtext {
+            font-size: 13px;
+            color: #a0a0a0;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab active" id="tab-new">✏️ New</button>
+            <button class="tab" id="tab-history">📜 History</button>
+        </div>
+
+        <!-- New Suggestion Panel -->
+        <div class="panel active" id="panel-new">
+            <h1>💡 Leave a Suggestion</h1>
+            <p class="subtitle">Share your ideas to help us improve Sovereign Browser.</p>
+
+            <textarea id="suggestion-input" placeholder="Type your suggestion here..." autofocus></textarea>
+
+            <div class="button-row">
+                <button class="cancel-btn" id="cancel-btn">Cancel</button>
+                <button class="submit-btn" id="submit-btn">Submit</button>
+            </div>
+        </div>
+
+        <!-- History Panel -->
+        <div class="panel" id="panel-history">
+            <h1>📜 Previous Suggestions</h1>
+            <p class="subtitle">Your submitted suggestions are stored locally.</p>
+            <div class="history-list" id="history-list">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+
+        <!-- Success Message -->
+        <div class="success-message" id="success">
+            <div class="success-icon">✅</div>
+            <div class="success-text">Thank you!</div>
+            <div class="success-subtext">Your suggestion has been saved.</div>
+        </div>
+    </div>
+
+    <script>
+        const { invoke } = window.__TAURI__.core;
+        const { getCurrentWindow } = window.__TAURI__.window;
+
+        const input = document.getElementById('suggestion-input');
+        const submitBtn = document.getElementById('submit-btn');
+        const cancelBtn = document.getElementById('cancel-btn');
+        const success = document.getElementById('success');
+
+        const tabNew = document.getElementById('tab-new');
+        const tabHistory = document.getElementById('tab-history');
+        const panelNew = document.getElementById('panel-new');
+        const panelHistory = document.getElementById('panel-history');
+        const historyList = document.getElementById('history-list');
+
+        // Focus the input on load
+        input.focus();
+
+        // Tab switching
+        tabNew.addEventListener('click', () => {
+            tabNew.classList.add('active');
+            tabHistory.classList.remove('active');
+            panelNew.classList.add('active');
+            panelHistory.classList.remove('active');
+            input.focus();
+        });
+
+        tabHistory.addEventListener('click', async () => {
+            tabHistory.classList.add('active');
+            tabNew.classList.remove('active');
+            panelHistory.classList.add('active');
+            panelNew.classList.remove('active');
+            await loadHistory();
+        });
+
+        // Load history
+        async function loadHistory() {
+            try {
+                const suggestions = await invoke('get_suggestions');
+
+                if (suggestions.length === 0) {
+                    historyList.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-icon">📭</div>
+                            <div class="empty-text">No suggestions yet</div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                // Show most recent first
+                const reversed = [...suggestions].reverse();
+                historyList.innerHTML = reversed.map(s => {
+                    const date = new Date(s.timestamp);
+                    const formatted = date.toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit'
+                    });
+                    return `
+                        <div class="history-item">
+                            <div class="history-text">${escapeHtml(s.text)}</div>
+                            <div class="history-date">${formatted}</div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (e) {
+                historyList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">❌</div>
+                        <div class="empty-text">Failed to load history</div>
+                    </div>
+                `;
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Cancel button closes the window
+        cancelBtn.addEventListener('click', async () => {
+            const win = getCurrentWindow();
+            await win.close();
+        });
+
+        // Submit button
+        submitBtn.addEventListener('click', async () => {
+            const text = input.value.trim();
+            if (!text) return;
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Saving...';
+
+            try {
+                await invoke('save_suggestion', { text });
+
+                // Show success message
+                panelNew.classList.remove('active');
+                tabNew.style.display = 'none';
+                tabHistory.style.display = 'none';
+                success.classList.add('show');
+
+                // Close window after a brief delay
+                setTimeout(async () => {
+                    const win = getCurrentWindow();
+                    await win.close();
+                }, 1500);
+            } catch (e) {
+                alert('Failed to save suggestion: ' + e);
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Submit';
+            }
+        });
+
+        // Enter key submits (Cmd+Enter or Ctrl+Enter for multi-line)
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                submitBtn.click();
+            }
+            if (e.key === 'Escape') {
+                cancelBtn.click();
+            }
+        });
+    </script>
+</body>
+
+</html>

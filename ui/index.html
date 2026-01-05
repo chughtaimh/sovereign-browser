@@ -97,17 +97,85 @@
         <input type="text" id="url-input" placeholder="duckduckgo.com" />
         <button id="go-btn">Go</button>
     </div>
+
     <script>
         const { invoke } = window.__TAURI__.core;
+        const { listen } = window.__TAURI__.event;
+
         const urlInput = document.getElementById('url-input');
 
+        // ===== Navigation =====
         function navigate() {
             if (urlInput.value) invoke('navigate', { url: urlInput.value });
         }
+
         document.getElementById('go-btn').addEventListener('click', navigate);
         document.getElementById('back-btn').addEventListener('click', () => invoke('go_back'));
         document.getElementById('fwd-btn').addEventListener('click', () => invoke('go_forward'));
         urlInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') navigate(); });
+
+        // ===== Listen for focus-url-bar event from global shortcuts =====
+        listen('focus-url-bar', () => {
+            console.log('focus-url-bar event received');
+            // Use setTimeout to ensure the focus happens after the window regains focus
+            setTimeout(() => {
+                urlInput.focus();
+                urlInput.select();
+            }, 50);
+        });
+
+        // ===== Listen for suggestion prompt event from menu =====
+        listen('show-suggestion-prompt', async () => {
+            console.log('show-suggestion-prompt event received');
+            const suggestion = prompt('💡 Leave a suggestion for Sovereign Browser:\n\nShare your ideas, feature requests, or any feedback to help us improve.');
+            if (suggestion && suggestion.trim()) {
+                try {
+                    await invoke('save_suggestion', { text: suggestion.trim() });
+                    alert('✅ Thank you! Your suggestion has been saved.');
+                } catch (e) {
+                    alert('❌ Failed to save suggestion: ' + e);
+                }
+            }
+        });
+
+        // ===== Trackpad swipe gestures =====
+        let accumulatedDeltaX = 0;
+        let wheelTimeout = null;
+        const SWIPE_THRESHOLD = 100;
+
+        document.addEventListener('wheel', (e) => {
+            if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 5) {
+                accumulatedDeltaX += e.deltaX;
+
+                clearTimeout(wheelTimeout);
+                wheelTimeout = setTimeout(() => {
+                    if (accumulatedDeltaX < -SWIPE_THRESHOLD) {
+                        invoke('go_back');
+                    } else if (accumulatedDeltaX > SWIPE_THRESHOLD) {
+                        invoke('go_forward');
+                    }
+                    accumulatedDeltaX = 0;
+                }, 100);
+            }
+        }, { passive: true });
+
+        // ===== Side mouse button support =====
+        document.addEventListener('mouseup', (e) => {
+            if (e.button === 3) {
+                e.preventDefault();
+                invoke('go_back');
+            } else if (e.button === 4) {
+                e.preventDefault();
+                invoke('go_forward');
+            }
+        });
+
+        // ===== Escape to blur URL bar =====
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && document.activeElement === urlInput) {
+                urlInput.blur();
+            }
+        });
     </script>
 </body>
 
