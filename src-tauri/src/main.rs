@@ -52,11 +52,15 @@ fn main() {
             let content_y = toolbar_height_physical;
             let content_height = physical_size.height.saturating_sub(toolbar_height_physical).max(100);
 
-            // Create the content webview builder
+            // Chrome-like User-Agent to ensure compatibility with Google Workspace and other services
+            let chrome_user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+            // Create the content webview builder with custom User-Agent
             let webview_builder = WebviewBuilder::new(
                 "content", 
                 WebviewUrl::External(Url::parse("https://duckduckgo.com").unwrap())
-            );
+            )
+            .user_agent(chrome_user_agent);
             
             // Add the child webview to the window with PHYSICAL position and size
             let _content_webview = main_window.add_child(
