@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager, Listener, WebviewUrl, WebviewBuilder, LogicalPosition, LogicalSize};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewBuilder, LogicalPosition, LogicalSize, Window};
 use url::Url;
 
 #[tauri::command]
@@ -11,7 +11,9 @@ fn navigate(app: AppHandle, url: String) {
 
     if let Ok(valid_url) = Url::parse(&url_string) {
         if let Some(webview) = app.get_webview("content") {
-            let _ = webview.load_url(valid_url.as_str());
+            // Use JS evaluation for navigation to avoid API instability
+            let js_script = format!("window.location.href = '{}'", valid_url);
+            let _ = webview.eval(&js_script);
         }
     }
 }
@@ -33,26 +35,30 @@ fn go_forward(app: AppHandle) {
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
-            let main_window = app.get_window("main").unwrap();
+            // Get the main window (Window, not WebviewWindow)
+            let main_window: Window = app.get_window("main").unwrap();
             let handle = app.handle().clone();
 
             let top_bar_height = 50.0;
+            let size = main_window.inner_size()?;
+            
+            let width = size.width as f64;
+            let height = size.height as f64;
 
-            let content_webview = WebviewBuilder::new(
+            // Create the content webview builder
+            let webview_builder = WebviewBuilder::new(
                 "content", 
                 WebviewUrl::External(Url::parse("https://duckduckgo.com").unwrap())
-            )
-            .auto_resize()
-            .build(&main_window)?;
+            );
+            
+            // Add the child webview to the window with position and size
+            let _content_webview = main_window.add_child(
+                webview_builder,
+                LogicalPosition::new(0.0, top_bar_height),
+                LogicalSize::new(width, height - top_bar_height),
+            )?;
 
-            let size = main_window.inner_size()?;
-            // Initial sizing
-            content_webview.set_bounds(tauri::Rect {
-                position: LogicalPosition::new(0.0, top_bar_height).into(),
-                size: LogicalSize::new(size.width as f64, size.height as f64 - top_bar_height).into(),
-            })?;
-
-            // Resize handling
+            // Handle Window Resizing to keep the webview filled
             let main_window_clone = main_window.clone();
             main_window.on_window_event(move |event| {
                 if let tauri::WindowEvent::Resized(physical_size) = event {
