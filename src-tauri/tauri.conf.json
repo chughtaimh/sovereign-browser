@@ -9,6 +9,7 @@
     "beforeBuildCommand": "echo skipping"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "Sovereign Browser",

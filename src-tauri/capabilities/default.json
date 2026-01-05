@@ -2,7 +2,9 @@
   "identifier": "default",
   "description": "Default capabilities",
   "local": true,
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default"
   ]
