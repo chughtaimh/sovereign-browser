@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewBuilder, LogicalPosition, LogicalSize, Window};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewBuilder, PhysicalPosition, PhysicalSize, Window};
 use url::Url;
 
 #[tauri::command]
@@ -39,14 +39,18 @@ fn main() {
             let main_window: Window = app.get_window("main").unwrap();
             let handle = app.handle().clone();
 
-            let top_bar_height = 50.0;
+            // Toolbar height in CSS/logical pixels - must match ui/index.html #toolbar height
+            // Adding extra offset to account for macOS title bar
+            let toolbar_height_logical: f64 = 56.0 + 28.0; // 56px toolbar + ~28px for macOS title bar offset
+            
             let physical_size = main_window.inner_size()?;
             let scale_factor = main_window.scale_factor()?;
             
-            // Convert physical size to logical size (important for HiDPI/Retina displays)
-            let logical_size = physical_size.to_logical::<f64>(scale_factor);
-            let width = logical_size.width;
-            let height = logical_size.height;
+            // Convert toolbar height to physical pixels
+            let toolbar_height_physical = (toolbar_height_logical * scale_factor) as u32;
+            
+            let content_y = toolbar_height_physical;
+            let content_height = physical_size.height.saturating_sub(toolbar_height_physical).max(100);
 
             // Create the content webview builder
             let webview_builder = WebviewBuilder::new(
@@ -54,24 +58,25 @@ fn main() {
                 WebviewUrl::External(Url::parse("https://duckduckgo.com").unwrap())
             );
             
-            // Add the child webview to the window with position and size
+            // Add the child webview to the window with PHYSICAL position and size
             let _content_webview = main_window.add_child(
                 webview_builder,
-                LogicalPosition::new(0.0, top_bar_height),
-                LogicalSize::new(width, height - top_bar_height),
+                PhysicalPosition::new(0, content_y as i32),
+                PhysicalSize::new(physical_size.width, content_height),
             )?;
 
             // Handle Window Resizing to keep the webview filled
             let main_window_clone = main_window.clone();
             main_window.on_window_event(move |event| {
-                if let tauri::WindowEvent::Resized(physical_size) = event {
-                    let scale_factor = main_window_clone.scale_factor().unwrap_or(1.0);
-                    let logical_size = physical_size.to_logical::<f64>(scale_factor);
+                if let tauri::WindowEvent::Resized(new_physical_size) = event {
+                    let scale = main_window_clone.scale_factor().unwrap_or(1.0);
+                    let toolbar_physical = (toolbar_height_logical * scale) as u32;
+                    let content_h = new_physical_size.height.saturating_sub(toolbar_physical).max(100);
                     
                     if let Some(wv) = handle.get_webview("content") {
                         let _ = wv.set_bounds(tauri::Rect {
-                            position: LogicalPosition::new(0.0, top_bar_height).into(),
-                            size: LogicalSize::new(logical_size.width, logical_size.height - top_bar_height).into(),
+                            position: tauri::Position::Physical(PhysicalPosition::new(0, toolbar_physical as i32)),
+                            size: tauri::Size::Physical(PhysicalSize::new(new_physical_size.width, content_h)),
                         });
                     }
                 }
