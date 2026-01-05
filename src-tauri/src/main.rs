@@ -40,10 +40,13 @@ fn main() {
             let handle = app.handle().clone();
 
             let top_bar_height = 50.0;
-            let size = main_window.inner_size()?;
+            let physical_size = main_window.inner_size()?;
+            let scale_factor = main_window.scale_factor()?;
             
-            let width = size.width as f64;
-            let height = size.height as f64;
+            // Convert physical size to logical size (important for HiDPI/Retina displays)
+            let logical_size = physical_size.to_logical::<f64>(scale_factor);
+            let width = logical_size.width;
+            let height = logical_size.height;
 
             // Create the content webview builder
             let webview_builder = WebviewBuilder::new(
