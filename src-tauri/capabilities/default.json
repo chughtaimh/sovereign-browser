@@ -4,8 +4,6 @@
   "local": true,
   "windows": ["main"],
   "permissions": [
-    "core:default",
-    "core:webview:allow-load-url",
-    "core:webview:allow-set-bounds"
+    "core:default"
   ]
 }
