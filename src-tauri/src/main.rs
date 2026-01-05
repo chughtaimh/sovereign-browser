@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewBuilder, PhysicalPosition, PhysicalSize, Window, WebviewWindow};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewBuilder, PhysicalPosition, PhysicalSize, Window, WebviewWindow, Emitter};
 use tauri::menu::{MenuBuilder, SubmenuBuilder, PredefinedMenuItem, MenuItemBuilder};
 // Dialog plugin kept for potential future use but not currently used
 use url::Url;
@@ -43,6 +43,38 @@ fn save_suggestion_to_file(app: &AppHandle, text: String) -> Result<(), String> 
     fs::write(&path, json).map_err(|e| e.to_string())?;
     
     Ok(())
+}
+
+// Show settings window - creates a new window for settings
+fn show_settings_window(app: &AppHandle) {
+    // Check if window already exists
+    if app.get_window("settings").is_some() {
+        // Focus existing window
+        if let Some(win) = app.get_window("settings") {
+            let _ = win.set_focus();
+        }
+        return;
+    }
+    
+    // Create a new settings window
+    let settings_window = tauri::WebviewWindowBuilder::new(
+        app,
+        "settings",
+        tauri::WebviewUrl::App("settings.html".into())
+    )
+    .title("Settings")
+    .inner_size(450.0, 520.0)
+    .resizable(true)
+    .minimizable(false)
+    .maximizable(false)
+    .center()
+    .focused(true)
+    .build();
+    
+    match settings_window {
+        Ok(_) => println!("Settings window created"),
+        Err(e) => println!("Failed to create settings window: {:?}", e),
+    }
 }
 
 // Show suggestion window - creates a new window for input
@@ -173,8 +205,6 @@ fn copy_current_url(app: AppHandle) -> Result<(), String> {
 fn main() {
     // Store reference to main webview window globally
     let toolbar_webview: Arc<Mutex<Option<WebviewWindow>>> = Arc::new(Mutex::new(None));
-    let toolbar_for_handler = toolbar_webview.clone();
-    let toolbar_for_shortcuts = toolbar_webview.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -229,7 +259,10 @@ fn main() {
             app.on_menu_event(move |_app_handle, event| {
                 println!("Menu event received: {:?}", event.id().0.as_str());
                 match event.id().0.as_str() {
-                    "settings" | "leave_suggestion" => {
+                    "settings" => {
+                        show_settings_window(&handle_for_menu);
+                    }
+                    "leave_suggestion" => {
                         show_suggestion_window(&handle_for_menu);
                     }
                     "print" => {
@@ -244,10 +277,12 @@ fn main() {
             // --- Register Global Shortcuts ---
             #[cfg(desktop)]
             {
+                // URL bar focus shortcuts (only fire when window is focused)
                 let cmd_l = Shortcut::new(Some(Modifiers::META), Code::KeyL);
                 let ctrl_l = Shortcut::new(Some(Modifiers::CONTROL), Code::KeyL);
                 let cmd_k = Shortcut::new(Some(Modifiers::META), Code::KeyK);
                 let ctrl_k = Shortcut::new(Some(Modifiers::CONTROL), Code::KeyK);
+                
                 let cmd_shift_r = Shortcut::new(Some(Modifiers::META | Modifiers::SHIFT), Code::KeyR);
                 let ctrl_shift_r = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR);
                 let cmd_shift_l = Shortcut::new(Some(Modifiers::META | Modifiers::SHIFT), Code::KeyL);
@@ -258,55 +293,24 @@ fn main() {
                 let cmd_opt_c = Shortcut::new(Some(Modifiers::META | Modifiers::ALT), Code::KeyC);
 
                 let handle_for_shortcuts = handle.clone();
-                let toolbar_for_sc = toolbar_for_shortcuts.clone();
                 let main_window_for_sc = main_window.clone();
                 
                 app.handle().plugin(
                     tauri_plugin_global_shortcut::Builder::new()
-                        .with_handler(move |app_handle, shortcut, event| {
+                        .with_handler(move |_app_handle, shortcut, event| {
                             if event.state() != ShortcutState::Pressed {
                                 return;
                             }
                             
-                            // Focus URL bar - use a different approach
-                            // We'll use native macOS accessibility APIs via a helper
+                            // Focus URL bar - only when our window is focused
                             if shortcut == &cmd_l || shortcut == &ctrl_l || shortcut == &cmd_k || shortcut == &ctrl_k {
-                                println!("Cmd+L/K pressed - attempting focus");
-                                
-                                // First, ensure the window is focused
-                                let _ = main_window_for_sc.set_focus();
-                                
-                                if let Some(wv) = toolbar_for_sc.lock().unwrap().as_ref() {
-                                    // Try to use the window's internal focus mechanism
-                                    // by hiding and showing the content webview briefly,
-                                    // which should return focus to the toolbar
-                                    if let Some(content_wv) = handle_for_shortcuts.get_webview("content") {
-                                        // Hide content webview briefly to force focus back to toolbar
-                                        let _ = content_wv.hide();
-                                        
-                                        // Execute focus JS
-                                        let js = r#"
-                                            (function() {
-                                                const urlInput = document.getElementById('url-input');
-                                                if (urlInput) {
-                                                    urlInput.focus();
-                                                    urlInput.select();
-                                                    console.log('URL input focused via JS');
-                                                }
-                                            })();
-                                        "#;
-                                        let _ = wv.eval(js);
-                                        
-                                        // Show content webview again after a brief delay
-                                        let content_wv_clone = content_wv.clone();
-                                        std::thread::spawn(move || {
-                                            std::thread::sleep(std::time::Duration::from_millis(100));
-                                            let _ = content_wv_clone.show();
-                                        });
-                                    }
-                                    
-                                    println!("Focus attempt completed");
+                                // Check if our window is focused before stealing the shortcut
+                                if !main_window_for_sc.is_focused().unwrap_or(false) {
+                                    return; // Don't capture if another app is focused
                                 }
+                                
+                                // Emit event to toolbar webview to focus URL bar
+                                let _ = main_window_for_sc.emit("focus-url-bar", ());
                                 return;
                             }
                             

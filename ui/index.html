@@ -170,8 +170,15 @@
             }
         });
 
-        // ===== Escape to blur URL bar =====
+        // ===== Cmd+L / Cmd+K to focus URL bar (window-scoped, not global) =====
         document.addEventListener('keydown', (e) => {
+            // Cmd+L or Cmd+K to focus URL bar (only works when this window is focused)
+            if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L' || e.key === 'k' || e.key === 'K')) {
+                e.preventDefault();
+                urlInput.focus();
+                urlInput.select();
+            }
+            // Escape to blur URL bar
             if (e.key === 'Escape' && document.activeElement === urlInput) {
                 urlInput.blur();
             }

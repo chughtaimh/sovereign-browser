@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html,
+        body {
+            height: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e0e0e0;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        h1 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .settings-section {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+            border: 1px solid #3a3a5a;
+        }
+
+        .section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #0a84ff;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .setting-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .setting-row:last-child {
+            border-bottom: none;
+        }
+
+        .setting-info {
+            flex: 1;
+        }
+
+        .setting-label {
+            font-size: 14px;
+            color: #e0e0e0;
+            margin-bottom: 4px;
+        }
+
+        .setting-description {
+            font-size: 12px;
+            color: #707090;
+        }
+
+        /* Toggle switch */
+        .toggle-switch {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            cursor: pointer;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #3a3a5a;
+            border-radius: 24px;
+            transition: all 0.3s;
+        }
+
+        .toggle-slider::before {
+            content: '';
+            position: absolute;
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background: #fff;
+            border-radius: 50%;
+            transition: all 0.3s;
+        }
+
+        input:checked+.toggle-slider {
+            background: linear-gradient(135deg, #0a84ff, #0066cc);
+        }
+
+        input:checked+.toggle-slider::before {
+            transform: translateX(20px);
+        }
+
+        /* Select dropdown */
+        .setting-select {
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid #3a3a5a;
+            border-radius: 8px;
+            color: #e0e0e0;
+            font-size: 13px;
+            min-width: 140px;
+            cursor: pointer;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .setting-select:hover {
+            border-color: #5a5a7a;
+        }
+
+        .setting-select:focus {
+            border-color: #0a84ff;
+        }
+
+        /* Input field */
+        .setting-input {
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid #3a3a5a;
+            border-radius: 8px;
+            color: #e0e0e0;
+            font-size: 13px;
+            width: 200px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .setting-input:focus {
+            border-color: #0a84ff;
+            box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.2);
+        }
+
+        /* Button styles */
+        .button-row {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            justify-content: flex-end;
+        }
+
+        button {
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .close-btn {
+            background: linear-gradient(135deg, #0a84ff, #0066cc);
+            border: none;
+            color: #fff;
+        }
+
+        .close-btn:hover {
+            background: linear-gradient(135deg, #2196f3, #0a84ff);
+            transform: translateY(-1px);
+        }
+
+        .reset-btn {
+            background: transparent;
+            border: 1px solid #4a4a6a;
+            color: #a0a0a0;
+        }
+
+        .reset-btn:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: #6a6a8a;
+        }
+
+        /* Version info */
+        .version-info {
+            text-align: center;
+            margin-top: auto;
+            padding-top: 16px;
+            font-size: 12px;
+            color: #505070;
+        }
+
+        /* Success notification */
+        .notification {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: linear-gradient(135deg, #4ade80, #22c55e);
+            color: #fff;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            opacity: 0;
+            transition: all 0.3s ease;
+            pointer-events: none;
+        }
+
+        .notification.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>⚙️ Settings</h1>
+
+        <!-- General Section -->
+        <div class="settings-section">
+            <div class="section-title">General</div>
+
+            <div class="setting-row">
+                <div class="setting-info">
+                    <div class="setting-label">Homepage</div>
+                    <div class="setting-description">The page that opens when you start the browser</div>
+                </div>
+                <input type="text" class="setting-input" id="homepage" value="https://duckduckgo.com"
+                    placeholder="https://example.com">
+            </div>
+
+            <div class="setting-row">
+                <div class="setting-info">
+                    <div class="setting-label">Default Search Engine</div>
+                    <div class="setting-description">Search engine used for address bar queries</div>
+                </div>
+                <select class="setting-select" id="search-engine">
+                    <option value="duckduckgo" selected>DuckDuckGo</option>
+                    <option value="google">Google</option>
+                    <option value="bing">Bing</option>
+                    <option value="brave">Brave Search</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Privacy Section -->
+        <div class="settings-section">
+            <div class="section-title">Privacy & Security</div>
+
+            <div class="setting-row">
+                <div class="setting-info">
+                    <div class="setting-label">Block Trackers</div>
+                    <div class="setting-description">Prevent third-party trackers from following you</div>
+                </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="block-trackers" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+
+            <div class="setting-row">
+                <div class="setting-info">
+                    <div class="setting-label">HTTPS Only Mode</div>
+                    <div class="setting-description">Always try to connect using secure HTTPS</div>
+                </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="https-only" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+
+            <div class="setting-row">
+                <div class="setting-info">
+                    <div class="setting-label">Clear Data on Exit</div>
+                    <div class="setting-description">Remove browsing data when you close the browser</div>
+                </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="clear-on-exit">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Appearance Section -->
+        <div class="settings-section">
+            <div class="section-title">Appearance</div>
+
+            <div class="setting-row">
+                <div class="setting-info">
+                    <div class="setting-label">Theme</div>
+                    <div class="setting-description">Choose your preferred color scheme</div>
+                </div>
+                <select class="setting-select" id="theme">
+                    <option value="dark" selected>Dark</option>
+                    <option value="light">Light</option>
+                    <option value="system">System Default</option>
+                </select>
+            </div>
+
+            <div class="setting-row">
+                <div class="setting-info">
+                    <div class="setting-label">Compact Mode</div>
+                    <div class="setting-description">Use smaller toolbar for more screen space</div>
+                </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="compact-mode">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <div class="button-row">
+            <button class="reset-btn" id="reset-btn">Reset to Defaults</button>
+            <button class="close-btn" id="close-btn">Done</button>
+        </div>
+
+        <div class="version-info">
+            Sovereign Browser v1.0.0
+        </div>
+    </div>
+
+    <div class="notification" id="notification">Settings saved!</div>
+
+    <script>
+        const { getCurrentWindow } = window.__TAURI__.window;
+
+        const closeBtn = document.getElementById('close-btn');
+        const resetBtn = document.getElementById('reset-btn');
+        const notification = document.getElementById('notification');
+
+        // Settings elements
+        const settings = {
+            homepage: document.getElementById('homepage'),
+            searchEngine: document.getElementById('search-engine'),
+            blockTrackers: document.getElementById('block-trackers'),
+            httpsOnly: document.getElementById('https-only'),
+            clearOnExit: document.getElementById('clear-on-exit'),
+            theme: document.getElementById('theme'),
+            compactMode: document.getElementById('compact-mode')
+        };
+
+        // Load saved settings from localStorage
+        function loadSettings() {
+            const saved = localStorage.getItem('sovereign-settings');
+            if (saved) {
+                try {
+                    const data = JSON.parse(saved);
+                    if (data.homepage) settings.homepage.value = data.homepage;
+                    if (data.searchEngine) settings.searchEngine.value = data.searchEngine;
+                    if (data.blockTrackers !== undefined) settings.blockTrackers.checked = data.blockTrackers;
+                    if (data.httpsOnly !== undefined) settings.httpsOnly.checked = data.httpsOnly;
+                    if (data.clearOnExit !== undefined) settings.clearOnExit.checked = data.clearOnExit;
+                    if (data.theme) settings.theme.value = data.theme;
+                    if (data.compactMode !== undefined) settings.compactMode.checked = data.compactMode;
+                } catch (e) {
+                    console.error('Failed to load settings:', e);
+                }
+            }
+        }
+
+        // Save settings to localStorage
+        function saveSettings() {
+            const data = {
+                homepage: settings.homepage.value,
+                searchEngine: settings.searchEngine.value,
+                blockTrackers: settings.blockTrackers.checked,
+                httpsOnly: settings.httpsOnly.checked,
+                clearOnExit: settings.clearOnExit.checked,
+                theme: settings.theme.value,
+                compactMode: settings.compactMode.checked
+            };
+            localStorage.setItem('sovereign-settings', JSON.stringify(data));
+            showNotification();
+        }
+
+        function showNotification() {
+            notification.classList.add('show');
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 2000);
+        }
+
+        // Auto-save on change
+        Object.values(settings).forEach(el => {
+            el.addEventListener('change', saveSettings);
+        });
+        settings.homepage.addEventListener('input', saveSettings);
+
+        // Reset to defaults
+        resetBtn.addEventListener('click', () => {
+            settings.homepage.value = 'https://duckduckgo.com';
+            settings.searchEngine.value = 'duckduckgo';
+            settings.blockTrackers.checked = true;
+            settings.httpsOnly.checked = true;
+            settings.clearOnExit.checked = false;
+            settings.theme.value = 'dark';
+            settings.compactMode.checked = false;
+            saveSettings();
+        });
+
+        // Close button
+        closeBtn.addEventListener('click', async () => {
+            const win = getCurrentWindow();
+            await win.close();
+        });
+
+        // ESC key closes window
+        document.addEventListener('keydown', async (e) => {
+            if (e.key === 'Escape') {
+                const win = getCurrentWindow();
+                await win.close();
+            }
+        });
+
+        // Load settings on page load
+        loadSettings();
+    </script>
+</body>
+
+</html>
