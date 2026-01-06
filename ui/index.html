@@ -101,6 +101,7 @@
     <script>
         const { invoke } = window.__TAURI__.core;
         const { listen } = window.__TAURI__.event;
+        const { getCurrentWebview } = window.__TAURI__.webview;
 
         const urlInput = document.getElementById('url-input');
 
@@ -114,28 +115,64 @@
         document.getElementById('fwd-btn').addEventListener('click', () => invoke('go_forward'));
         urlInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') navigate(); });
 
-        // ===== Listen for focus-url-bar event from global shortcuts =====
-        listen('focus-url-bar', () => {
-            console.log('focus-url-bar event received');
-            // Use setTimeout to ensure the focus happens after the window regains focus
-            setTimeout(() => {
-                urlInput.focus();
+        // ===== Focus Logic =====
+        async function focusUrlBarHard() {
+            console.log('Focusing URL bar (hard)...');
+            // Step A: focus the toolbar webview
+            await getCurrentWebview().setFocus();
+
+            // Step B: focus the DOM element on the next frame
+            requestAnimationFrame(() => {
+                urlInput.focus({ preventScroll: true });
                 urlInput.select();
-            }, 50);
+
+                // Optional single retry if focus didn’t stick
+                setTimeout(() => {
+                    if (document.activeElement !== urlInput) {
+                        urlInput.focus({ preventScroll: true });
+                        urlInput.select();
+                    }
+                }, 0);
+            });
+        }
+
+        // Listen for focus-url-bar event from Native Menu
+        listen('focus-url-bar', async () => {
+            await focusUrlBarHard();
+        });
+
+        // ===== Escape to Return Focus =====
+        urlInput.addEventListener('keydown', async (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                urlInput.blur();
+
+                // Use robust Rust command to focus content
+                try {
+                    await invoke('focus_content');
+                } catch (err) {
+                    console.error('Failed to focus content webview:', err);
+                }
+            }
         });
 
         // ===== Listen for suggestion prompt event from menu =====
         listen('show-suggestion-prompt', async () => {
-            console.log('show-suggestion-prompt event received');
-            const suggestion = prompt('💡 Leave a suggestion for Sovereign Browser:\n\nShare your ideas, feature requests, or any feedback to help us improve.');
-            if (suggestion && suggestion.trim()) {
-                try {
-                    await invoke('save_suggestion', { text: suggestion.trim() });
-                    alert('✅ Thank you! Your suggestion has been saved.');
-                } catch (e) {
-                    alert('❌ Failed to save suggestion: ' + e);
+            // Focus self first to ensure prompt gets input
+            await getCurrentWebview().setFocus();
+
+            // Short delay to let focus settle before prompt (browsers can be picky)
+            setTimeout(async () => {
+                const suggestion = prompt('💡 Leave a suggestion for Sovereign Browser:\n\nShare your ideas, feature requests, or any feedback to help us improve.');
+                if (suggestion && suggestion.trim()) {
+                    try {
+                        await invoke('save_suggestion', { text: suggestion.trim() });
+                        alert('✅ Thank you! Your suggestion has been saved.');
+                    } catch (e) {
+                        alert('❌ Failed to save suggestion: ' + e);
+                    }
                 }
-            }
+            }, 50);
         });
 
         // ===== Trackpad swipe gestures =====
@@ -167,20 +204,6 @@
             } else if (e.button === 4) {
                 e.preventDefault();
                 invoke('go_forward');
-            }
-        });
-
-        // ===== Cmd+L / Cmd+K to focus URL bar (window-scoped, not global) =====
-        document.addEventListener('keydown', (e) => {
-            // Cmd+L or Cmd+K to focus URL bar (only works when this window is focused)
-            if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L' || e.key === 'k' || e.key === 'K')) {
-                e.preventDefault();
-                urlInput.focus();
-                urlInput.select();
-            }
-            // Escape to blur URL bar
-            if (e.key === 'Escape' && document.activeElement === urlInput) {
-                urlInput.blur();
             }
         });
     </script>

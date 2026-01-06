@@ -7,11 +7,9 @@
   ],
   "permissions": [
     "core:default",
-    "global-shortcut:allow-register",
-    "global-shortcut:allow-unregister",
-    "global-shortcut:allow-is-registered",
     "clipboard-manager:allow-write-text",
     "clipboard-manager:allow-read-text",
-    "dialog:default"
+    "dialog:default",
+    "core:webview:allow-set-webview-focus"
   ]
 }
