@@ -6,6 +6,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sovereign Browser</title>
     <style>
+        :root {
+            --bg-color: #1e1e1e;
+            --toolbar-bg: #2d2d2d;
+            --input-bg: #1e1e1e;
+            --input-border: #4a4a4a;
+            --text-color: #e0e0e0;
+            --accent-color: #0a84ff;
+            --accent-glow: rgba(10, 132, 255, 0.3);
+            --dropdown-bg: rgba(45, 45, 45, 0.95);
+            --dropdown-hover: #3a3a3a;
+            --ghost-color: #808080;
+        }
+
         *,
         *::before,
         *::after {
@@ -17,9 +30,10 @@
         html,
         body {
             height: 100%;
-            background: #1e1e1e;
+            background: var(--bg-color);
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             overflow: hidden;
+            font-size: 13px;
         }
 
         #toolbar {
@@ -31,6 +45,145 @@
             gap: 8px;
             border-bottom: 1px solid #1a1a1a;
             -webkit-app-region: drag;
+            position: relative;
+            z-index: 100;
+        }
+
+        /* Input Container relative for dropdown positioning */
+        #input-container {
+            flex-grow: 1;
+            position: relative;
+            -webkit-app-region: no-drag;
+            height: 32px;
+        }
+
+        .url-input-wrapper {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+        }
+
+        input {
+            width: 100%;
+            height: 100%;
+            padding: 0 12px;
+            border-radius: 6px;
+            border: 1px solid var(--input-border);
+            outline: none;
+            font-size: 13px;
+            background: var(--input-bg);
+            color: var(--text-color);
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+            /* Ensure input text is above ghost text if we use overlay method, 
+               but here we might use value manipulation or a span behind. 
+               Let's use the 'transparent background' with span behind approach 
+               OR just standard input and managing selection for ghost text.
+               Standard input with selection is more robust for 'Tab' behavior.
+            */
+            z-index: 2;
+            position: relative;
+            background: transparent;
+            /* allows ghost to show through if we used underlay */
+            background-color: var(--input-bg);
+            /* Opaque for now */
+        }
+
+        input:focus {
+            border-color: var(--accent-color);
+            box-shadow: 0 0 0 2px var(--accent-glow);
+        }
+
+        /* Ghost Text Overlay (Visual only) */
+        #url-ghost {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            padding: 0 13px;
+            /* match input padding + border rough adjustment */
+            display: flex;
+            align-items: center;
+            color: var(--ghost-color);
+            pointer-events: none;
+            z-index: 3;
+            /* On top of input? No, input text must be visible. */
+            /* 
+               Actually, the best ghost text is usually: 
+               user types "goo", ghost shows "gle.com" right after cursor.
+               Implementing that strictly with HTML inputs is hard.
+               Easier approach: 
+               Input value = "google.com", Selection = "gle.com".
+               Visual style matches "ghost" if selected.
+            */
+            display: none;
+            /* Hidden unless we go for custom rendering */
+            white-space: pre;
+            overflow: hidden;
+        }
+
+        /* Autocomplete Dropdown - REMOVED (Moved to separate window) */
+
+        .suggestion-item {
+            padding: 8px 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: default;
+            color: #ccc;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .suggestion-item:last-child {
+            border-bottom: none;
+        }
+
+        .suggestion-item.selected,
+        .suggestion-item:hover {
+            background: var(--dropdown-hover);
+            color: #fff;
+        }
+
+        .suggestion-icon {
+            width: 16px;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            background: #444;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+
+        .suggestion-content {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            flex-grow: 1;
+        }
+
+        .suggestion-title {
+            font-weight: 500;
+            color: #eee;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .suggestion-url {
+            font-size: 11px;
+            color: #888;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .match-highlight {
+            color: #fff;
+            font-weight: 700;
         }
 
         button {
@@ -47,6 +200,7 @@
             align-items: center;
             justify-content: center;
             transition: all 0.15s ease;
+            flex-shrink: 0;
         }
 
         button:hover {
@@ -57,36 +211,6 @@
         button:active {
             background: #3a3a3a;
         }
-
-        #go-btn {
-            width: auto;
-            padding: 0 16px;
-            font-size: 13px;
-            font-weight: 500;
-        }
-
-        input {
-            -webkit-app-region: no-drag;
-            flex-grow: 1;
-            height: 32px;
-            padding: 0 12px;
-            border-radius: 6px;
-            border: 1px solid #4a4a4a;
-            outline: none;
-            font-size: 13px;
-            background: #1e1e1e;
-            color: #e0e0e0;
-            transition: border-color 0.15s ease, box-shadow 0.15s ease;
-        }
-
-        input:focus {
-            border-color: #0a84ff;
-            box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.3);
-        }
-
-        input::placeholder {
-            color: #808080;
-        }
     </style>
 </head>
 
@@ -94,8 +218,18 @@
     <div id="toolbar">
         <button id="back-btn">&larr;</button>
         <button id="fwd-btn">&rarr;</button>
-        <input type="text" id="url-input" placeholder="duckduckgo.com" />
-        <button id="go-btn">Go</button>
+
+        <div id="input-container">
+            <div class="url-input-wrapper">
+                <input type="text" id="url-input" placeholder="Search or enter address" autocomplete="off"
+                    spellcheck="false" />
+                <div id="url-ghost"></div>
+            </div>
+
+            <!-- Dropdown handled by separate window -->
+        </div>
+
+        <button id="go-btn" style="width: auto; padding: 0 12px; font-size: 13px;">Go</button>
     </div>
 
     <script>
@@ -104,64 +238,226 @@
         const { getCurrentWebview } = window.__TAURI__.webview;
 
         const urlInput = document.getElementById('url-input');
+        const dropdown = document.getElementById('autocomplete-dropdown');
+        const ghost = document.getElementById('url-ghost'); // Not using visual overlay yet, sticking to input selection
 
-        // ===== Navigation =====
-        function navigate() {
-            if (urlInput.value) invoke('navigate', { url: urlInput.value });
+        // State
+        let currentDisplayedUrl = "";
+        let isUserTyping = false;
+        let selectedIndex = -1;
+        let suggestions = [];
+        let ghostCandidates = null; // Store top candidate for autocomplete acceptance
+
+        // Debounce Utility
+        function debounce(func, wait) {
+            let timeout;
+            return function (...args) {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(this, args), wait);
+            };
         }
 
-        document.getElementById('go-btn').addEventListener('click', navigate);
+        // ===== Navigation =====
+        function navigate(url) {
+            let target = url || urlInput.value;
+            if (target) {
+                invoke('navigate', { url: target });
+                // Optimistic UI update handled by backend event
+                hideDropdown();
+            }
+        }
+
+        document.getElementById('go-btn').addEventListener('click', () => navigate());
         document.getElementById('back-btn').addEventListener('click', () => invoke('go_back'));
         document.getElementById('fwd-btn').addEventListener('click', () => invoke('go_forward'));
-        urlInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') navigate(); });
 
-        // ===== Focus Logic =====
-        async function focusUrlBarHard() {
-            console.log('Focusing URL bar (hard)...');
-            // Step A: focus the toolbar webview
-            await getCurrentWebview().setFocus();
+        // ===== URL Bar Synchronization =====
 
-            // Step B: focus the DOM element on the next frame
-            requestAnimationFrame(() => {
-                urlInput.focus({ preventScroll: true });
-                urlInput.select();
+        // Listen for url-changed from Backend (Native + SPA)
+        listen('url-changed', (event) => {
+            const newUrl = event.payload;
+            currentDisplayedUrl = newUrl;
 
-                // Optional single retry if focus didn’t stick
-                setTimeout(() => {
-                    if (document.activeElement !== urlInput) {
-                        urlInput.focus({ preventScroll: true });
-                        urlInput.select();
-                    }
-                }, 0);
+            // Typing Protection: Only update input if user is NOT intentfully typing
+            if (!isUserTyping) {
+                urlInput.value = newUrl;
+            }
+        });
+
+        // Click Outside to Close
+        document.addEventListener('click', (e) => {
+            const container = document.getElementById('input-container');
+            if (!container.contains(e.target)) {
+                hideDropdown();
+            }
+        });
+
+        urlInput.addEventListener('blur', () => {
+            // Delay for click events on dropdown items
+            // But strict typing protection reset happens here
+            setTimeout(() => {
+                isUserTyping = false;
+                // Revert to actual URL if we didn't navigate
+                if (document.activeElement !== urlInput && urlInput.value !== currentDisplayedUrl) {
+                    urlInput.value = currentDisplayedUrl;
+                }
+            }, 200);
+        });
+
+        // ===== Autocomplete Logic =====
+
+        const doSearch = debounce(async (query) => {
+            if (!query || query.trim() === "") {
+                suggestions = [];
+                renderDropdown();
+                return;
+            }
+
+            try {
+                const results = await invoke('search_history', { query: query.trim() });
+                suggestions = results.map(r => ({
+                    ...r,
+                    type: 'history'
+                }));
+
+                // Add DuckDuckGo fallback
+                suggestions.push({
+                    type: 'search',
+                    title: `Search DuckDuckGo for "${query}"`,
+                    url: query, // will be parsed by backend
+                    score: 0
+                });
+
+                renderDropdown();
+                handleGhostText(query, results);
+            } catch (e) {
+                console.error("Search failed", e);
+            }
+        }, 100);
+
+        function handleGhostText(query, results) {
+            // Strict Ghost Text: Only if top result is a strong candidate
+            if (results.length > 0 && results[0].is_ghost_candidate) {
+                const top = results[0];
+                const topUrl = top.url;
+
+                // If the input is a prefix case-insensitive match of the URL
+                // We show the rest (but scheme handling makes this tricky).
+                // Simplified: if URL starts with query (ignoring https:// maybe)
+
+                // For MVP: We rely on the keyboard 'Tab' interaction. 
+                // We'll store the candidate.
+                ghostCandidates = topUrl;
+            } else {
+                ghostCandidates = null;
+            }
+        }
+
+        async function renderDropdown() {
+            // Instead of DOM, we invoke the backend to update the separate window
+            if (suggestions.length === 0) {
+                await invoke('update_dropdown', { query: '', results: [], selectedIndex: -1 });
+                return;
+            }
+
+            // We pass current suggestions and selected index
+            // Note: invoke args must match Rust command
+            await invoke('update_dropdown', {
+                query: urlInput.value,
+                results: suggestions,
+                selectedIndex: selectedIndex
             });
         }
 
-        // Listen for focus-url-bar event from Native Menu
-        listen('focus-url-bar', async () => {
-            await focusUrlBarHard();
+        // Just trigger render on selection change
+        function updateSelection() {
+            renderDropdown();
+        }
+
+        async function hideDropdown() {
+            selectedIndex = -1;
+            await invoke('update_dropdown', { query: '', results: [], selectedIndex: -1 });
+        }
+
+        // ===== Input Event Listeners =====
+
+        urlInput.addEventListener('input', (e) => {
+            isUserTyping = true;
+            // Always show dropdown if text exists
+            if (urlInput.value.trim().length > 0) {
+                doSearch(urlInput.value);
+            } else {
+                hideDropdown();
+            }
         });
 
-        // ===== Escape to Return Focus =====
-        urlInput.addEventListener('keydown', async (e) => {
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                urlInput.blur();
+        // Show dropdown on focus if content exists
+        urlInput.addEventListener('focus', () => {
+            isUserTyping = true;
+            urlInput.select();
+            if (urlInput.value.trim().length > 0) {
+                doSearch(urlInput.value);
+            }
+        });
 
-                // Use robust Rust command to focus content
-                try {
-                    await invoke('focus_content');
-                } catch (err) {
-                    console.error('Failed to focus content webview:', err);
+        urlInput.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (suggestions.length > 0) {
+                    selectedIndex = (selectedIndex + 1) % suggestions.length;
+                    updateSelection();
+                    // Optional: fill input with selection? usually standard browsers don't fully commit until enter
+                }
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (suggestions.length > 0) {
+                    selectedIndex = (selectedIndex - 1 + suggestions.length) % suggestions.length;
+                    updateSelection();
+                }
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                if (selectedIndex >= 0 && selectedIndex < suggestions.length) {
+                    navigate(suggestions[selectedIndex].url);
+                } else {
+                    navigate();
+                }
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                // Revert
+                urlInput.value = currentDisplayedUrl;
+                urlInput.blur();
+                hideDropdown();
+            } else if (e.key === 'Tab') {
+                e.preventDefault();
+                // 1. If an item is manually selected, use it
+                if (selectedIndex >= 0 && selectedIndex < suggestions.length) {
+                    navigate(suggestions[selectedIndex].url);
+                }
+                // 2. Else if ghost text is available (top match), use that (autocomplete)
+                else if (ghostCandidates) {
+                    urlInput.value = ghostCandidates;
+                    ghostCandidates = null;
+                    doSearch(urlInput.value);
+                }
+                // 3. Fallback: select the top item (Search or History)
+                else if (suggestions.length > 0) {
+                    navigate(suggestions[0].url);
                 }
             }
         });
 
-        // ===== Listen for suggestion prompt event from menu =====
-        listen('show-suggestion-prompt', async () => {
-            // Focus self first to ensure prompt gets input
+        // ===== Listen for Native Focus Event =====
+        listen('focus-url-bar', async () => {
             await getCurrentWebview().setFocus();
+            requestAnimationFrame(() => {
+                urlInput.focus({ preventScroll: true });
+                urlInput.select();
+            });
+        });
 
-            // Short delay to let focus settle before prompt (browsers can be picky)
+        // ===== Suggestion Prompt (Existing) =====
+        listen('show-suggestion-prompt', async () => {
+            await getCurrentWebview().setFocus();
             setTimeout(async () => {
                 const suggestion = prompt('💡 Leave a suggestion for Sovereign Browser:\n\nShare your ideas, feature requests, or any feedback to help us improve.');
                 if (suggestion && suggestion.trim()) {
@@ -173,38 +469,6 @@
                     }
                 }
             }, 50);
-        });
-
-        // ===== Trackpad swipe gestures =====
-        let accumulatedDeltaX = 0;
-        let wheelTimeout = null;
-        const SWIPE_THRESHOLD = 100;
-
-        document.addEventListener('wheel', (e) => {
-            if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 5) {
-                accumulatedDeltaX += e.deltaX;
-
-                clearTimeout(wheelTimeout);
-                wheelTimeout = setTimeout(() => {
-                    if (accumulatedDeltaX < -SWIPE_THRESHOLD) {
-                        invoke('go_back');
-                    } else if (accumulatedDeltaX > SWIPE_THRESHOLD) {
-                        invoke('go_forward');
-                    }
-                    accumulatedDeltaX = 0;
-                }, 100);
-            }
-        }, { passive: true });
-
-        // ===== Side mouse button support =====
-        document.addEventListener('mouseup', (e) => {
-            if (e.button === 3) {
-                e.preventDefault();
-                invoke('go_back');
-            } else if (e.button === 4) {
-                e.preventDefault();
-                invoke('go_forward');
-            }
         });
     </script>
 </body>

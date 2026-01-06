@@ -6,6 +6,15 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use tauri_plugin_clipboard_manager::ClipboardExt;
+use std::sync::{Arc, Mutex};
+
+mod history;
+use history::{HistoryStore, HistoryEntryScoped};
+
+// State wrapper for HistoryStore
+struct AppState {
+    history: Arc<HistoryStore>,
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 struct Suggestion {
@@ -199,13 +208,95 @@ fn clear_site_data(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn navigate(app: AppHandle, url: String) {
+fn navigate(app: AppHandle, state: tauri::State<AppState>, url: String) {
     let final_url = smart_parse_url(&url);
+
+    // Record intent to visit (typed)
+    state.history.add_visit(final_url.clone(), None, true);
 
     if let Some(webview) = app.get_webview("content") {
         let js_script = format!("window.location.href = '{}'", final_url);
         let _ = webview.eval(&js_script);
     }
+}
+
+#[tauri::command]
+fn spa_navigate(app: AppHandle, state: tauri::State<AppState>, url: String) {
+    // SPA navigation event from frontend hook
+    state.history.add_visit(url.clone(), None, false);
+    // Emit for URL bar sync
+    let _ = app.emit("url-changed", url);
+}
+
+#[tauri::command]
+fn navigate_from_dropdown(app: AppHandle, state: tauri::State<AppState>, url: String) {
+    navigate(app, state, url);
+}
+
+#[derive(Serialize, Clone)]
+struct DropdownPayload {
+    query: String,
+    results: Vec<serde_json::Value>, 
+    selectedIndex: i32,
+}
+
+#[tauri::command]
+fn update_dropdown(app: AppHandle, query: String, results: Vec<serde_json::Value>, selected_index: i32) {
+    if let Some(win) = app.get_window("dropdown") {
+        if results.is_empty() {
+             let _ = win.hide();
+             return;
+        }
+
+        // Calculate height: 8px padding + items * 50px approx?
+        // Actually best to let frontend determine height? 
+        // Hard to sync. Let's estimate: 42px per item approx.
+        let height = (results.len() as f64 * 45.0) + 10.0; 
+        let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize { width: 600.0, height }));
+        
+        // Position it under the input?
+        // We assume input is centered or fixed. 
+        // For MVP, we'll fix it to (offset_x, 56).
+        // To do this perfectly requires getting input position.
+        // We'll set it to match toolbar width/pos.
+        if let Some(main) = app.get_window("main") {
+             if let Ok(pos) = main.outer_position() {
+                 if let Ok(size) = main.inner_size() {
+                     // Assuming full width toolbar minus margins?
+                     // Let's just center it or use a fixed width of 600px centered.
+                     let center_x = pos.x + (size.width as i32 / 2);
+                     // On some systems titlebar might be different, but 80-90 is safe.
+                     // Scale factor applies to logical units.
+                     let scale = main.scale_factor().unwrap_or(1.0);
+                     let toolbar_h_logical = 56.0 + 28.0; // Rough estimate including titlebar
+                     let top_y = pos.y + (toolbar_h_logical * scale) as i32;
+                     
+                     // Dropdown width 600 logic
+                     let dd_width = 800 * scale as i32; 
+                     let start_x = center_x - (dd_width / 2);
+
+                     let _ = win.set_position(tauri::Position::Physical(PhysicalPosition::new(start_x, top_y)));
+                     let _ = win.set_size(tauri::Size::Physical(PhysicalSize::new(dd_width as u32, (height * scale) as u32)));
+                 }
+             }
+        }
+        
+        let _ = win.emit("update-dropdown", DropdownPayload { query, results, selectedIndex: selected_index });
+        let _ = win.show();
+        let _ = win.set_focus(); // Steal focus? NO. Input needs focus.
+        // Actually, on macOS, show() might steal focus.
+        // We need to immediately return focus to main?
+        // Let's rely on 'no-focus' attribute if possible, or refocus main.
+        if let Some(main) = app.get_window("main") {
+             // Defer focus back?
+             // Or construct window with acceptFirstMouse: false?
+        }
+    }
+}
+
+#[tauri::command]
+fn search_history(state: tauri::State<AppState>, query: String) -> Vec<HistoryEntryScoped> {
+    state.history.search(query, 10)
 }
 
 #[tauri::command]
@@ -272,6 +363,11 @@ fn main() {
             let main_window: Window = app.get_window("main").unwrap();
             let handle = app.handle().clone();
             
+            // Initialize History Store
+            let app_data_dir = app.path().app_data_dir().expect("failed to get app data dir");
+            let history_store = Arc::new(HistoryStore::new(app_data_dir));
+            app.manage(AppState { history: history_store });
+
             // --- Build Native Menu ---
             let sovereign_menu = SubmenuBuilder::new(app, "Sovereign")
                 .item(&PredefinedMenuItem::about(app, Some("About Sovereign Browser"), None)?)
@@ -316,6 +412,22 @@ fn main() {
                 .build()?;
 
             app.set_menu(menu)?;
+            
+            // --- Create Dropdown Window (Hidden) ---
+            let dropdown_window = tauri::WebviewWindowBuilder::new(
+                app,
+                "dropdown",
+                tauri::WebviewUrl::App("dropdown.html".into())
+            )
+            .title("Dropdown")
+            .inner_size(800.0, 400.0)
+            .decorations(false)
+            // .transparent(true) // transparency feature might define this, disabled for build fix
+            .visible(false)
+            .always_on_top(true) 
+            .skip_taskbar(true)
+            .focused(false) // Don't take focus
+            .build();
 
             // Handle menu events
             let handle_for_menu = handle.clone();
@@ -386,7 +498,69 @@ fn main() {
                 "content", 
                 WebviewUrl::External(Url::parse("https://duckduckgo.com").unwrap())
             )
-            .user_agent(chrome_user_agent);
+            .user_agent(chrome_user_agent)
+            .initialization_script(r#"
+                // SPA History Hook
+                (function() {
+                    const originalPushState = history.pushState;
+                    const originalReplaceState = history.replaceState;
+
+                    history.pushState = function() {
+                        originalPushState.apply(this, arguments);
+                        window.__TAURI__.core.invoke('spa_navigate', { url: window.location.href });
+                    };
+
+                    history.replaceState = function() {
+                        originalReplaceState.apply(this, arguments);
+                        window.__TAURI__.core.invoke('spa_navigate', { url: window.location.href });
+                    };
+
+                    window.addEventListener('popstate', () => {
+                        window.__TAURI__.core.invoke('spa_navigate', { url: window.location.href });
+                    });
+                    
+                    window.addEventListener('hashchange', () => {
+                        window.__TAURI__.core.invoke('spa_navigate', { url: window.location.href });
+                    });
+                })();
+            "#)
+            .on_navigation(|url| {
+                // Return true to allow navigation
+                true
+            })
+            .on_page_load(move |webview, payload| {
+                match payload.event() {
+                    tauri::webview::PageLoadEvent::Started => {
+                        if let Ok(url) = webview.url() {
+                             let _ = webview.emit("url-changed", url.to_string());
+                        }
+                    }
+                    tauri::webview::PageLoadEvent::Finished => {
+                        if let Ok(url) = webview.url() {
+                            let url_str = url.to_string();
+                            let _ = webview.emit("url-changed", &url_str);
+                            
+                            // Commit visit to history
+                            // We need access to state here. Since we can't easily move State into this closure
+                            // without complex cloning, we'll use the AppHandle stored in the webview
+                            // or rely on the IPC 'spa_navigate' for SPAs. 
+                            // Ideally, we'd invoke a command or use a global handle. 
+                            // For this MVP, we will rely on the fact that `spa_navigate` covers SPAs
+                            // and we need a way to commit standard navigations.
+                            //
+                            // FIX: We will emit an event back to the main process or use a custom command 
+                            // triggered by an injected script on load if we can't access state here.
+                            // BUT: We CAN access the app handle from the webview.
+                            let app_handle = webview.app_handle();
+                            if let Some(state) = app_handle.try_state::<AppState>() {
+                                let title = String::new(); 
+                                println!("[VERIFY] PageLoad Finished: {}", url_str);
+                                state.history.add_visit(url_str, Some(title), false);
+                            }
+                        }
+                    }
+                }
+            });
             
             let _content_webview = main_window.add_child(
                 webview_builder,
@@ -394,20 +568,35 @@ fn main() {
                 PhysicalSize::new(physical_size.width, content_height),
             )?;
 
-            // Handle Window Resizing
+            // Handle Window Resizing / Moving / Blur to hide dropdown
             let main_window_clone = main_window.clone();
+            let handle_clone = handle.clone();
             main_window.on_window_event(move |event| {
-                if let tauri::WindowEvent::Resized(new_physical_size) = event {
-                    let scale = main_window_clone.scale_factor().unwrap_or(1.0);
-                    let toolbar_physical = (toolbar_height_logical * scale) as u32;
-                    let content_h = new_physical_size.height.saturating_sub(toolbar_physical).max(100);
-                    
-                    if let Some(wv) = handle.get_webview("content") {
-                        let _ = wv.set_bounds(tauri::Rect {
-                            position: tauri::Position::Physical(PhysicalPosition::new(0, toolbar_physical as i32)),
-                            size: tauri::Size::Physical(PhysicalSize::new(new_physical_size.width, content_h)),
-                        });
+                match event {
+                    tauri::WindowEvent::Resized(new_physical_size) => {
+                         // ... existing resize logic ...
+                         let scale = main_window_clone.scale_factor().unwrap_or(1.0);
+                         let toolbar_physical = (toolbar_height_logical * scale) as u32;
+                         let content_h = new_physical_size.height.saturating_sub(toolbar_physical).max(100);
+                        
+                         if let Some(wv) = handle_clone.get_webview("content") {
+                            let _ = wv.set_bounds(tauri::Rect {
+                                position: tauri::Position::Physical(PhysicalPosition::new(0, toolbar_physical as i32)),
+                                size: tauri::Size::Physical(PhysicalSize::new(new_physical_size.width, content_h)),
+                            });
+                         }
+                         // Hide dropdown on resize
+                         if let Some(dd) = handle_clone.get_window("dropdown") {
+                             let _ = dd.hide();
+                         }
                     }
+                    tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Focused(false) => {
+                         // Hide dropdown on move or blur
+                         if let Some(dd) = handle_clone.get_window("dropdown") {
+                             let _ = dd.hide();
+                         }
+                    }
+                    _ => {}
                 }
             });
 
@@ -424,7 +613,11 @@ fn main() {
             clear_site_data,
             copy_current_url,
             focus_toolbar,
-            focus_content
+            focus_content,
+            spa_navigate,
+            search_history,
+            update_dropdown,
+            navigate_from_dropdown
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -466,5 +659,15 @@ mod tests {
         
         let unicode_encoded = urlencoding::encode("café");
         assert_eq!(smart_parse_url("café"), format!("https://duckduckgo.com/?q={}", unicode_encoded));
+
+        // Additional User Requested Tests
+        let cpp_pointers = urlencoding::encode("c++ pointers");
+        assert_eq!(smart_parse_url("c++ pointers"), format!("https://duckduckgo.com/?q={}", cpp_pointers));
+        
+        let cafe_near_me = urlencoding::encode("café near me");
+        assert_eq!(smart_parse_url("café near me"), format!("https://duckduckgo.com/?q={}", cafe_near_me));
+        
+        let quotes_amp = urlencoding::encode("hello \"world\" & others");
+        assert_eq!(smart_parse_url("hello \"world\" & others"), format!("https://duckduckgo.com/?q={}", quotes_amp));
     }
 }

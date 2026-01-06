@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <style>
+        :root {
+            --dropdown-bg: rgba(45, 45, 45, 0.95);
+            --dropdown-hover: #3a3a3a;
+            --text-color: #e0e0e0;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background: #1e1e1e;
+            /* Match theme since native transparent is disabled */
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+            color: var(--text-color);
+        }
+
+        #container {
+            background: var(--dropdown-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid #4a4a4a;
+            border-top: none;
+            /* Connects to toolbar */
+            border-radius: 0 0 8px 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .suggestion-item {
+            padding: 8px 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: default;
+            color: #ccc;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            font-size: 13px;
+        }
+
+        .suggestion-item:last-child {
+            border-bottom: none;
+        }
+
+        .suggestion-item.selected,
+        .suggestion-item:hover {
+            background: var(--dropdown-hover);
+            color: #fff;
+        }
+
+        .suggestion-icon {
+            width: 16px;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            background: #444;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+
+        .suggestion-content {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            flex-grow: 1;
+        }
+
+        .suggestion-title {
+            font-weight: 500;
+            color: #eee;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .suggestion-url {
+            font-size: 11px;
+            color: #888;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .match-highlight {
+            color: #fff;
+            font-weight: 700;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="container"></div>
+
+    <script>
+        const { listen } = window.__TAURI__.event;
+        const { invoke } = window.__TAURI__.core;
+
+        const container = document.getElementById('container');
+        let currentQuery = "";
+        let items = [];
+
+        function highlightMatch(text, query) {
+            if (!query) return text;
+            const idx = text.toLowerCase().indexOf(query.toLowerCase());
+            if (idx === -1) return text;
+            return text.substring(0, idx) +
+                `<span class="match-highlight">${text.substring(idx, idx + query.length)}</span>` +
+                text.substring(idx + query.length);
+        }
+
+        listen('update-dropdown', (event) => {
+            const payload = event.payload; // { query, results, selectedIndex }
+            currentQuery = payload.query;
+            items = payload.results;
+            const selectedIndex = payload.selectedIndex;
+
+            container.innerHTML = '';
+
+            if (items.length === 0) {
+                // Resize to 0 done by main process usually, but we can ensure empty
+                return;
+            }
+
+            items.forEach((item, index) => {
+                const div = document.createElement('div');
+                div.className = 'suggestion-item';
+                if (index === selectedIndex) div.classList.add('selected');
+
+                div.onclick = () => {
+                    invoke('navigate_from_dropdown', { url: item.url });
+                };
+
+                const iconChar = item.type === 'search' ? '🔍' : (item.title && item.title.length > 0 ? item.title[0].toUpperCase() : '🌐');
+
+                div.innerHTML = `
+                    <div class="suggestion-icon">${iconChar}</div>
+                    <div class="suggestion-content">
+                        ${item.title ? `<div class="suggestion-title">${highlightMatch(item.title, currentQuery)}</div>` : ''}
+                        <div class="suggestion-url">${highlightMatch(item.url, currentQuery)}</div>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        });
+    </script>
+</body>
+
+</html>
