@@ -151,6 +151,9 @@
                 container.appendChild(div);
             });
         });
+
+        // Signal readiness to Rust to prevent blank flashes
+        invoke('dropdown_ready');
     </script>
 </body>
 

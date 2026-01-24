@@ -14,6 +14,8 @@ use history::{HistoryStore, HistoryEntryScoped};
 // State wrapper for HistoryStore
 struct AppState {
     history: Arc<HistoryStore>,
+    dropdown_ready: Arc<Mutex<bool>>,
+    pending_payload: Arc<Mutex<Option<DropdownPayload>>>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -224,7 +226,7 @@ fn navigate(app: AppHandle, state: tauri::State<AppState>, url: String) {
 fn spa_navigate(app: AppHandle, state: tauri::State<AppState>, url: String) {
     // SPA navigation event from frontend hook
     state.history.add_visit(url.clone(), None, false);
-    // Emit for URL bar sync
+    // Emit for URL bar sync - Global App Event
     let _ = app.emit("url-changed", url);
 }
 
@@ -241,55 +243,69 @@ struct DropdownPayload {
 }
 
 #[tauri::command]
-fn update_dropdown(app: AppHandle, query: String, results: Vec<serde_json::Value>, selected_index: i32) {
-    if let Some(win) = app.get_window("dropdown") {
-        if results.is_empty() {
-             let _ = win.hide();
-             return;
-        }
-
-        // Calculate height: 8px padding + items * 50px approx?
-        // Actually best to let frontend determine height? 
-        // Hard to sync. Let's estimate: 42px per item approx.
-        let height = (results.len() as f64 * 45.0) + 10.0; 
-        let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize { width: 600.0, height }));
+fn dropdown_ready(app: AppHandle, state: tauri::State<AppState>) {
+    if let Ok(mut ready) = state.dropdown_ready.lock() {
+        *ready = true;
         
-        // Position it under the input?
-        // We assume input is centered or fixed. 
-        // For MVP, we'll fix it to (offset_x, 56).
-        // To do this perfectly requires getting input position.
-        // We'll set it to match toolbar width/pos.
-        if let Some(main) = app.get_window("main") {
-             if let Ok(pos) = main.outer_position() {
-                 if let Ok(size) = main.inner_size() {
-                     // Assuming full width toolbar minus margins?
-                     // Let's just center it or use a fixed width of 600px centered.
-                     let center_x = pos.x + (size.width as i32 / 2);
-                     // On some systems titlebar might be different, but 80-90 is safe.
-                     // Scale factor applies to logical units.
-                     let scale = main.scale_factor().unwrap_or(1.0);
-                     let toolbar_h_logical = 56.0 + 28.0; // Rough estimate including titlebar
-                     let top_y = pos.y + (toolbar_h_logical * scale) as i32;
-                     
-                     // Dropdown width 600 logic
-                     let dd_width = 800 * scale as i32; 
-                     let start_x = center_x - (dd_width / 2);
+        // Check for pending payload
+        if let Ok(mut pending) = state.pending_payload.lock() {
+            if let Some(payload) = pending.take() {
+                // Emit and Show
+                if let Some(win) = app.get_window("dropdown") {
+                    let _ = win.emit("update-dropdown", payload);
+                    let _ = win.show();
+                }
+            }
+        }
+    }
+}
 
-                     let _ = win.set_position(tauri::Position::Physical(PhysicalPosition::new(start_x, top_y)));
-                     let _ = win.set_size(tauri::Size::Physical(PhysicalSize::new(dd_width as u32, (height * scale) as u32)));
+// NEW Command to set exact bounds from frontend
+// Input: Logical coordinates relative to Main Window Content Area
+#[tauri::command]
+fn set_dropdown_bounds(app: AppHandle, x: f64, y: f64, width: f64, height: f64) {
+    if let Some(main) = app.get_window("main") {
+        if let Ok(main_pos) = main.inner_position() {
+             if let Ok(scale_factor) = main.scale_factor() {
+                 let screen_x = main_pos.x + (x * scale_factor) as i32;
+                 let screen_y = main_pos.y + (y * scale_factor) as i32;
+                 let screen_w = (width * scale_factor) as u32;
+                 let screen_h = (height * scale_factor) as u32;
+
+                 if let Some(dd) = app.get_window("dropdown") {
+                    let _ = dd.set_position(tauri::Position::Physical(PhysicalPosition::new(screen_x, screen_y)));
+                    let _ = dd.set_size(tauri::Size::Physical(PhysicalSize::new(screen_w, screen_h)));
                  }
              }
         }
+    }
+}
+
+#[tauri::command]
+fn update_dropdown(app: AppHandle, state: tauri::State<AppState>, query: String, results: Vec<serde_json::Value>, selected_index: i32) {
+    println!("[dropdown] update_dropdown results={} selected_index={}", results.len(), selected_index);
+    if let Ok(ready) = state.dropdown_ready.lock() {
+        let payload = DropdownPayload { query, results: results.clone(), selectedIndex: selected_index };
         
-        let _ = win.emit("update-dropdown", DropdownPayload { query, results, selectedIndex: selected_index });
-        let _ = win.show();
-        let _ = win.set_focus(); // Steal focus? NO. Input needs focus.
-        // Actually, on macOS, show() might steal focus.
-        // We need to immediately return focus to main?
-        // Let's rely on 'no-focus' attribute if possible, or refocus main.
-        if let Some(main) = app.get_window("main") {
-             // Defer focus back?
-             // Or construct window with acceptFirstMouse: false?
+        if !*ready {
+            // Queue it
+             if let Ok(mut pending) = state.pending_payload.lock() {
+                 *pending = Some(payload);
+             }
+             return;
+        }
+        
+        if let Some(win) = app.get_window("dropdown") {
+            if results.is_empty() {
+                 let _ = win.hide();
+                 return;
+            }
+
+            // Emit payload FIRST
+            let _ = win.emit("update-dropdown", payload);
+            
+            // Show window WITHOUT stealing focus
+            let _ = win.show();
         }
     }
 }
@@ -366,7 +382,11 @@ fn main() {
             // Initialize History Store
             let app_data_dir = app.path().app_data_dir().expect("failed to get app data dir");
             let history_store = Arc::new(HistoryStore::new(app_data_dir));
-            app.manage(AppState { history: history_store });
+            app.manage(AppState { 
+                history: history_store,
+                dropdown_ready: Arc::new(Mutex::new(false)),
+                pending_payload: Arc::new(Mutex::new(None)),
+            });
 
             // --- Build Native Menu ---
             let sovereign_menu = SubmenuBuilder::new(app, "Sovereign")
@@ -427,6 +447,8 @@ fn main() {
             .always_on_top(true) 
             .skip_taskbar(true)
             .focused(false) // Don't take focus
+            //.focusable(false) // Not available in standard tauri 2.0 window builder yet without traits, relying on focused(false) + platform behavior
+            .visible(false) // Start hidden
             .build();
 
             // Handle menu events
@@ -500,28 +522,48 @@ fn main() {
             )
             .user_agent(chrome_user_agent)
             .initialization_script(r#"
-                // SPA History Hook
+                // SPA History Hook & Security Hardening
                 (function() {
+                    // 1. Capture Tauri Invoke ONLY for this closure
+                    // This relies on withGlobalTauri: true being injected BEFORE this script.
+                    const invoke = window.__TAURI__ ? window.__TAURI__.core.invoke : null;
+                    
+                    // 2. NUKE window.__TAURI__ to prevent page access
+                    // This is critical for security in content webviews.
+                    if (window.__TAURI__) {
+                        delete window.__TAURI__;
+                        console.log("[Sovereign] Secured: window.__TAURI__ removed from global scope.");
+                    } else {
+                        console.warn("[Sovereign] Warning: window.__TAURI__ was not found during init.");
+                    }
+
+                    if (!invoke) return; // Should not happen if configured correctly
+
                     const originalPushState = history.pushState;
                     const originalReplaceState = history.replaceState;
 
                     history.pushState = function() {
                         originalPushState.apply(this, arguments);
-                        window.__TAURI__.core.invoke('spa_navigate', { url: window.location.href });
+                        invoke('spa_navigate', { url: window.location.href });
                     };
 
                     history.replaceState = function() {
                         originalReplaceState.apply(this, arguments);
-                        window.__TAURI__.core.invoke('spa_navigate', { url: window.location.href });
+                        invoke('spa_navigate', { url: window.location.href });
                     };
 
                     window.addEventListener('popstate', () => {
-                        window.__TAURI__.core.invoke('spa_navigate', { url: window.location.href });
+                        invoke('spa_navigate', { url: window.location.href });
                     });
                     
                     window.addEventListener('hashchange', () => {
-                        window.__TAURI__.core.invoke('spa_navigate', { url: window.location.href });
+                        invoke('spa_navigate', { url: window.location.href });
                     });
+                    
+                    // Click Tracking for Dropdown Safety
+                    window.addEventListener('pointerdown', () => {
+                        invoke('content_pointer_down', {});
+                    }, true);
                 })();
             "#)
             .on_navigation(|url| {
@@ -532,13 +574,15 @@ fn main() {
                 match payload.event() {
                     tauri::webview::PageLoadEvent::Started => {
                         if let Ok(url) = webview.url() {
-                             let _ = webview.emit("url-changed", url.to_string());
+                             // Emit to app handle
+                             let _ = webview.app_handle().emit("url-changed", url.to_string());
                         }
                     }
                     tauri::webview::PageLoadEvent::Finished => {
                         if let Ok(url) = webview.url() {
                             let url_str = url.to_string();
-                            let _ = webview.emit("url-changed", &url_str);
+                            // EMIT TO APP (Global) so Toolbar picks it up
+                            let _ = webview.app_handle().emit("url-changed", &url_str);
                             
                             // Commit visit to history
                             // We need access to state here. Since we can't easily move State into this closure
@@ -589,9 +633,9 @@ fn main() {
                          if let Some(dd) = handle_clone.get_window("dropdown") {
                              let _ = dd.hide();
                          }
-                    }
-                    tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Focused(false) => {
-                         // Hide dropdown on move or blur
+                     }
+                    tauri::WindowEvent::Moved(_) => {
+                         // Hide dropdown on move (removed Focused(false) check to prevent auto-hide on dropdown show)
                          if let Some(dd) = handle_clone.get_window("dropdown") {
                              let _ = dd.hide();
                          }
@@ -617,7 +661,13 @@ fn main() {
             spa_navigate,
             search_history,
             update_dropdown,
-            navigate_from_dropdown
+            navigate_from_dropdown,
+            search_history,
+            update_dropdown,
+            navigate_from_dropdown,
+            set_dropdown_bounds,
+            content_pointer_down,
+            dropdown_ready
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -667,7 +717,21 @@ mod tests {
         let cafe_near_me = urlencoding::encode("café near me");
         assert_eq!(smart_parse_url("café near me"), format!("https://duckduckgo.com/?q={}", cafe_near_me));
         
+        
         let quotes_amp = urlencoding::encode("hello \"world\" & others");
         assert_eq!(smart_parse_url("hello \"world\" & others"), format!("https://duckduckgo.com/?q={}", quotes_amp));
+    }
+}
+
+#[tauri::command]
+fn content_pointer_down(app: AppHandle) {
+    // 1. Hide dropdown
+    if let Some(win) = app.get_window("dropdown") {
+        let _ = win.hide();
+    }
+    // 2. Notify toolbar (so it can blur input or reset state)
+    // We emit to the main window (toolbar)
+    if let Some(main) = app.get_window("main") {
+        let _ = main.emit("content-focused", ());
     }
 }

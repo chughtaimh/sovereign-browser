@@ -238,15 +238,28 @@
         const { getCurrentWebview } = window.__TAURI__.webview;
 
         const urlInput = document.getElementById('url-input');
+        const inputContainer = document.getElementById('input-container');
         const dropdown = document.getElementById('autocomplete-dropdown');
-        const ghost = document.getElementById('url-ghost'); // Not using visual overlay yet, sticking to input selection
+        const ghost = document.getElementById('url-ghost');
 
-        // State
+        window.addEventListener('unhandledrejection', (e) => {
+            console.error('Unhandled rejection:', e.reason);
+        });
+
+        // State Machine
+        const STATE = {
+            VIEWING: 'viewing',
+            EDITING: 'editing',
+            NAVIGATING: 'navigating'
+        };
+        let inputState = STATE.VIEWING;
+
         let currentDisplayedUrl = "";
-        let isUserTyping = false;
         let selectedIndex = -1;
         let suggestions = [];
-        let ghostCandidates = null; // Store top candidate for autocomplete acceptance
+        let ghostCandidates = null;
+        let searchSeq = 0; // Async guard
+        let ignoreNextBlur = false; // Blur shield
 
         // Debounce Utility
         function debounce(func, wait) {
@@ -261,9 +274,10 @@
         function navigate(url) {
             let target = url || urlInput.value;
             if (target) {
+                inputState = STATE.NAVIGATING;
                 invoke('navigate', { url: target });
-                // Optimistic UI update handled by backend event
                 hideDropdown();
+                // Removed urlInput.blur() to prevent focus fighting
             }
         }
 
@@ -273,48 +287,89 @@
 
         // ===== URL Bar Synchronization =====
 
-        // Listen for url-changed from Backend (Native + SPA)
         listen('url-changed', (event) => {
             const newUrl = event.payload;
             currentDisplayedUrl = newUrl;
 
-            // Typing Protection: Only update input if user is NOT intentfully typing
-            if (!isUserTyping) {
+            // Only update input if we are in VIEWING mode (or NAVIGATING completed)
+            if (inputState === STATE.VIEWING) {
                 urlInput.value = newUrl;
             }
         });
 
         // Click Outside to Close
+        // Click Outside to Close
         document.addEventListener('click', (e) => {
             const container = document.getElementById('input-container');
+            // If we clicked outside input container, reset to viewing
             if (!container.contains(e.target)) {
+                // Only reset if we were editing
+                if (inputState === STATE.EDITING) {
+                    endEditSession(false); // revert
+                }
                 hideDropdown();
             }
         });
 
         urlInput.addEventListener('blur', () => {
-            // Delay for click events on dropdown items
-            // But strict typing protection reset happens here
-            setTimeout(() => {
-                isUserTyping = false;
-                // Revert to actual URL if we didn't navigate
-                if (document.activeElement !== urlInput && urlInput.value !== currentDisplayedUrl) {
-                    urlInput.value = currentDisplayedUrl;
+            // If ignoreNextBlur is set (e.g. interacting with something that shouldn't close), skip
+            if (ignoreNextBlur) {
+                ignoreNextBlur = false;
+                urlInput.focus(); // Reclaim focus
+                return;
+            }
+
+            // Guard: If window lost focus (moved to another app or dropdown window), DO NOT revert.
+            // This allows the user to click away and come back without losing progress.
+            if (!document.hasFocus()) {
+                return;
+            }
+
+            // If we are navigating, do nothing (wait for page load)
+            if (inputState === STATE.NAVIGATING) return;
+
+            // Otherwise, end edit session (reverting value)
+            requestAnimationFrame(() => {
+                if (document.activeElement !== urlInput) {
+                    endEditSession(false);
                 }
-            }, 200);
+            });
         });
+
+        function startEditSession() {
+            inputState = STATE.EDITING;
+            urlInput.select();
+            if (urlInput.value.trim().length > 0) {
+                doSearch(urlInput.value);
+            }
+        }
+
+        function endEditSession(commit) {
+            inputState = STATE.VIEWING;
+            hideDropdown();
+            if (!commit) {
+                urlInput.value = currentDisplayedUrl;
+            }
+            // If commit, value stays as is until navigation updates it
+        }
 
         // ===== Autocomplete Logic =====
 
         const doSearch = debounce(async (query) => {
             if (!query || query.trim() === "") {
                 suggestions = [];
-                renderDropdown();
+                hideDropdown();
                 return;
             }
 
+            const currentSeq = ++searchSeq;
+
             try {
                 const results = await invoke('search_history', { query: query.trim() });
+
+                // Guard: If a newer search started, ignore this result
+                if (currentSeq !== searchSeq) return;
+
                 suggestions = results.map(r => ({
                     ...r,
                     type: 'history'
@@ -328,7 +383,10 @@
                     score: 0
                 });
 
-                renderDropdown();
+                // Reset selection on new search
+                selectedIndex = -1;
+
+                await renderDropdown();
                 handleGhostText(query, results);
             } catch (e) {
                 console.error("Search failed", e);
@@ -336,36 +394,39 @@
         }, 100);
 
         function handleGhostText(query, results) {
-            // Strict Ghost Text: Only if top result is a strong candidate
             if (results.length > 0 && results[0].is_ghost_candidate) {
-                const top = results[0];
-                const topUrl = top.url;
-
-                // If the input is a prefix case-insensitive match of the URL
-                // We show the rest (but scheme handling makes this tricky).
-                // Simplified: if URL starts with query (ignoring https:// maybe)
-
-                // For MVP: We rely on the keyboard 'Tab' interaction. 
-                // We'll store the candidate.
-                ghostCandidates = topUrl;
+                ghostCandidates = results[0].url;
             } else {
                 ghostCandidates = null;
             }
         }
 
+        async function updateDropdownBounds() {
+            const rect = inputContainer.getBoundingClientRect();
+            // We send LOGICAL coordinates to Rust. Rust now handles the scale factor.
+            await invoke('set_dropdown_bounds', {
+                x: rect.left,
+                y: rect.bottom, // Align to bottom of input container
+                width: rect.width,
+                height: 300 // Max height logical
+            });
+        }
+
         async function renderDropdown() {
-            // Instead of DOM, we invoke the backend to update the separate window
             if (suggestions.length === 0) {
-                await invoke('update_dropdown', { query: '', results: [], selectedIndex: -1 });
+                hideDropdown();
                 return;
             }
 
-            // We pass current suggestions and selected index
-            // Note: invoke args must match Rust command
+            // 1. Set Bounds First
+            await updateDropdownBounds();
+
+            // 2. Update Content
+            console.log('[dropdown] invoking update_dropdown', { count: suggestions.length, selectedIndex });
             await invoke('update_dropdown', {
                 query: urlInput.value,
                 results: suggestions,
-                selectedIndex: selectedIndex
+                selected_index: selectedIndex
             });
         }
 
@@ -376,13 +437,16 @@
 
         async function hideDropdown() {
             selectedIndex = -1;
-            await invoke('update_dropdown', { query: '', results: [], selectedIndex: -1 });
+            await invoke('update_dropdown', { query: '', results: [], selected_index: -1 });
         }
 
         // ===== Input Event Listeners =====
 
+        // ===== Input Event Listeners =====
+
         urlInput.addEventListener('input', (e) => {
-            isUserTyping = true;
+            if (inputState !== STATE.EDITING) inputState = STATE.EDITING;
+
             // Always show dropdown if text exists
             if (urlInput.value.trim().length > 0) {
                 doSearch(urlInput.value);
@@ -393,11 +457,7 @@
 
         // Show dropdown on focus if content exists
         urlInput.addEventListener('focus', () => {
-            isUserTyping = true;
-            urlInput.select();
-            if (urlInput.value.trim().length > 0) {
-                doSearch(urlInput.value);
-            }
+            startEditSession();
         });
 
         urlInput.addEventListener('keydown', (e) => {
@@ -406,7 +466,7 @@
                 if (suggestions.length > 0) {
                     selectedIndex = (selectedIndex + 1) % suggestions.length;
                     updateSelection();
-                    // Optional: fill input with selection? usually standard browsers don't fully commit until enter
+                    // Do NOT navigate, only highlight
                 }
             } else if (e.key === 'ArrowUp') {
                 e.preventDefault();
@@ -423,36 +483,49 @@
                 }
             } else if (e.key === 'Escape') {
                 e.preventDefault();
-                // Revert
-                urlInput.value = currentDisplayedUrl;
+                endEditSession(false); // Revert and blur
                 urlInput.blur();
-                hideDropdown();
             } else if (e.key === 'Tab') {
-                e.preventDefault();
-                // 1. If an item is manually selected, use it
-                if (selectedIndex >= 0 && selectedIndex < suggestions.length) {
-                    navigate(suggestions[selectedIndex].url);
-                }
-                // 2. Else if ghost text is available (top match), use that (autocomplete)
-                else if (ghostCandidates) {
-                    urlInput.value = ghostCandidates;
-                    ghostCandidates = null;
-                    doSearch(urlInput.value);
-                }
-                // 3. Fallback: select the top item (Search or History)
-                else if (suggestions.length > 0) {
-                    navigate(suggestions[0].url);
+                if (suggestions.length > 0 || ghostCandidates) {
+                    e.preventDefault();
+                    // Tab behavior: Auto-complete ghost text or cycle?
+                    // Standard: Tab moves focus. We might want to keep that if no ghost text.
+                    // If ghost text exists, accept it.
+                    if (ghostCandidates) {
+                        urlInput.value = ghostCandidates;
+                        ghostCandidates = null;
+                        doSearch(urlInput.value);
+                    } else if (suggestions.length > 0 && selectedIndex >= 0) {
+                        // If item selected, fill it
+                        urlInput.value = suggestions[selectedIndex].url;
+                        doSearch(urlInput.value);
+                    }
                 }
             }
         });
 
         // ===== Listen for Native Focus Event =====
+        // ===== Listen for Native Focus Event =====
         listen('focus-url-bar', async () => {
             await getCurrentWebview().setFocus();
             requestAnimationFrame(() => {
+                inputState = STATE.EDITING; // Force editing mode
                 urlInput.focus({ preventScroll: true });
                 urlInput.select();
+                // Check if we need to show dropdown
+                if (urlInput.value.trim().length > 0) {
+                    doSearch(urlInput.value);
+                }
             });
+        });
+
+        // ===== Content Focus Event (from Rust) =====
+        listen('content-focused', () => {
+            // Content received click/focus
+            if (inputState === STATE.EDITING) {
+                endEditSession(false);
+            }
+            hideDropdown();
         });
 
         // ===== Suggestion Prompt (Existing) =====
