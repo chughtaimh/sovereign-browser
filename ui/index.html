@@ -8,6 +8,8 @@
     <style>
         :root {
             --bg-color: #1e1e1e;
+            --tab-bar-height: 40px;
+            /* CONSTANT */
             --toolbar-bg: #2d2d2d;
             --input-bg: #1e1e1e;
             --input-border: #4a4a4a;
@@ -211,10 +213,152 @@
         button:active {
             background: #3a3a3a;
         }
+
+        button:active {
+            background: #3a3a3a;
+        }
+
+        /* --- Tab Bar Styles --- */
+        #tab-bar {
+            height: var(--tab-bar-height);
+            /* 40px */
+            background: #1e1e1e;
+            /* Match root bg */
+            display: flex;
+            align-items: flex-end;
+            padding: 0 10px;
+            padding-left: 80px;
+            /* PADDING FOR TRAFFIC LIGHTS (Mac) */
+            /* Padding for aesthetics */
+            padding-top: 4px;
+            /* Space above tabs */
+            gap: 4px;
+            -webkit-app-region: drag;
+            /* THE RUNWAY: Entire strip is draggable */
+            overflow-x: auto;
+            scrollbar-width: none;
+            /* Hide scrollbar */
+        }
+
+        #tab-bar::-webkit-scrollbar {
+            display: none;
+        }
+
+        .tab {
+            height: 32px;
+            /* Leaves 8px top for drag */
+            background: #2d2d2d;
+            border-radius: 8px 8px 0 0;
+            padding: 0 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 120px;
+            max-width: 240px;
+            flex: 1;
+            color: #ccc;
+            font-size: 12px;
+            cursor: pointer;
+            -webkit-app-region: no-drag;
+            /* HOLES: Tabs absorb clicks */
+            transition: background 0.1s;
+            position: relative;
+            border: 1px solid transparent;
+            border-bottom: none;
+            user-select: none;
+        }
+
+        .tab:hover {
+            background: #3a3a3a;
+        }
+
+        .tab.active {
+            background: #3a3a3a;
+            /* Matches toolbar */
+            color: #fff;
+            position: relative;
+            z-index: 10;
+        }
+
+        /* Make the toolbar flush with the active tab */
+        .tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: -1px;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: #3a3a3a;
+            /* Matches toolbar bg */
+        }
+
+        .tab-favicon {
+            width: 16px;
+            height: 16px;
+            background: #444;
+            /* Placeholder */
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+
+        .tab-title {
+            flex-grow: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .tab-close {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            color: #aaa;
+            opacity: 0;
+            /* Hidden by default */
+            transition: all 0.1s;
+        }
+
+        .tab-close:hover {
+            background: #555;
+            color: #fff;
+        }
+
+        .tab:hover .tab-close {
+            opacity: 1;
+        }
+
+        #new-tab-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: transparent;
+            border: none;
+            color: #ccc;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            -webkit-app-region: no-drag;
+            margin-bottom: 2px;
+        }
+
+        #new-tab-btn:hover {
+            background: #3a3a3a;
+            color: #fff;
+        }
     </style>
 </head>
 
 <body>
+    <div id="tab-bar">
+        <!-- Tabs injected here -->
+        <button id="new-tab-btn" title="New Tab">+</button>
+    </div>
     <div id="toolbar">
         <button id="back-btn">&larr;</button>
         <button id="fwd-btn">&rarr;</button>
@@ -302,6 +446,57 @@
                 urlInput.value = newUrl;
             }
         });
+
+        // ===== Tab Management =====
+        const tabBar = document.getElementById('tab-bar');
+        const newTabBtn = document.getElementById('new-tab-btn');
+
+        newTabBtn.addEventListener('click', () => {
+            invoke('create_tab', { url: "https://duckduckgo.com" });
+        });
+
+        listen('update-tabs', (event) => {
+            const { tabs, activeTabId } = event.payload;
+            renderTabs(tabs, activeTabId);
+        });
+
+        function renderTabs(tabs, activeId) {
+            // Clear existing tabs (keeping the new tab button which is last)
+            // Actually, safer to rebuild innerHTML or use insertBefore
+            const existingTabs = document.querySelectorAll('.tab');
+            existingTabs.forEach(t => t.remove());
+
+            tabs.forEach(tab => {
+                const el = document.createElement('div');
+                el.className = `tab ${tab.id === activeId ? 'active' : ''}`;
+
+                // Favicon logic (placeholder)
+                const favInfo = tab.favicon ? `<img src="${tab.favicon}" class="tab-favicon">` : `<div class="tab-favicon"></div>`;
+
+                el.innerHTML = `
+                    ${favInfo}
+                    <span class="tab-title">${tab.title || 'New Tab'}</span>
+                    <div class="tab-close" title="Close Tab">&times;</div>
+                `;
+
+                // Click to Switch
+                el.addEventListener('click', (e) => {
+                    if (tab.id !== activeId) {
+                        invoke('switch_tab', { tabId: tab.id });
+                    }
+                });
+
+                // Close Button
+                const closeBtn = el.querySelector('.tab-close');
+                closeBtn.addEventListener('click', (e) => {
+                    e.stopPropagation(); // Prevent switch
+                    invoke('close_tab', { tabId: tab.id });
+                });
+
+                // Insert before new tab button
+                tabBar.insertBefore(el, newTabBtn);
+            });
+        }
 
         // Click Outside to Close
         // Click Outside to Close
