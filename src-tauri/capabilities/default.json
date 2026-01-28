@@ -3,7 +3,8 @@
   "description": "Default capabilities",
   "local": true,
   "windows": [
-    "main"
+    "main",
+    "dropdown"
   ],
   "permissions": [
     "core:default",

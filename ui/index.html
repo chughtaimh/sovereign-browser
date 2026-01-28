@@ -246,6 +246,12 @@
             console.error('Unhandled rejection:', e.reason);
         });
 
+        // Hide dropdown when window loses focus (user switches apps)
+        window.addEventListener('blur', () => {
+            console.log('[blur] window lost focus, hiding dropdown');
+            hideDropdown();
+        });
+
         // State Machine
         const STATE = {
             VIEWING: 'viewing',
@@ -356,19 +362,27 @@
         // ===== Autocomplete Logic =====
 
         const doSearch = debounce(async (query) => {
+            console.log('[doSearch] called with query:', query);
             if (!query || query.trim() === "") {
+                console.log('[doSearch] empty query, clearing');
                 suggestions = [];
                 hideDropdown();
                 return;
             }
 
             const currentSeq = ++searchSeq;
+            console.log('[doSearch] searchSeq:', currentSeq);
 
             try {
+                console.log('[doSearch] invoking search_history...');
                 const results = await invoke('search_history', { query: query.trim() });
+                console.log('[doSearch] search_history returned:', results);
 
                 // Guard: If a newer search started, ignore this result
-                if (currentSeq !== searchSeq) return;
+                if (currentSeq !== searchSeq) {
+                    console.log('[doSearch] stale result, ignoring');
+                    return;
+                }
 
                 suggestions = results.map(r => ({
                     ...r,
@@ -383,13 +397,15 @@
                     score: 0
                 });
 
+                console.log('[doSearch] suggestions prepared:', suggestions.length);
+
                 // Reset selection on new search
                 selectedIndex = -1;
 
                 await renderDropdown();
                 handleGhostText(query, results);
             } catch (e) {
-                console.error("Search failed", e);
+                console.error("[doSearch] ERROR:", e);
             }
         }, 100);
 
@@ -413,21 +429,30 @@
         }
 
         async function renderDropdown() {
+            console.log('[renderDropdown] called, suggestions.length:', suggestions.length);
             if (suggestions.length === 0) {
+                console.log('[renderDropdown] no suggestions, hiding');
                 hideDropdown();
                 return;
             }
 
-            // 1. Set Bounds First
-            await updateDropdownBounds();
+            try {
+                // 1. Set Bounds First
+                console.log('[renderDropdown] setting bounds...');
+                await updateDropdownBounds();
+                console.log('[renderDropdown] bounds set, now calling update_dropdown...');
 
-            // 2. Update Content
-            console.log('[dropdown] invoking update_dropdown', { count: suggestions.length, selectedIndex });
-            await invoke('update_dropdown', {
-                query: urlInput.value,
-                results: suggestions,
-                selected_index: selectedIndex
-            });
+                // 2. Update Content
+                console.log('[dropdown] invoking update_dropdown', { count: suggestions.length, selectedIndex });
+                await invoke('update_dropdown', {
+                    query: urlInput.value,
+                    results: suggestions,
+                    selectedIndex: selectedIndex
+                });
+                console.log('[renderDropdown] update_dropdown completed successfully');
+            } catch (e) {
+                console.error('[renderDropdown] ERROR:', e);
+            }
         }
 
         // Just trigger render on selection change
@@ -437,7 +462,7 @@
 
         async function hideDropdown() {
             selectedIndex = -1;
-            await invoke('update_dropdown', { query: '', results: [], selected_index: -1 });
+            await invoke('update_dropdown', { query: '', results: [], selectedIndex: -1 });
         }
 
         // ===== Input Event Listeners =====

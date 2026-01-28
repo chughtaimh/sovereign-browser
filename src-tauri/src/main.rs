@@ -244,69 +244,105 @@ struct DropdownPayload {
 
 #[tauri::command]
 fn dropdown_ready(app: AppHandle, state: tauri::State<AppState>) {
+    println!("[dropdown] dropdown_ready called!");
     if let Ok(mut ready) = state.dropdown_ready.lock() {
         *ready = true;
+        println!("[dropdown] dropdown_ready set to true");
         
         // Check for pending payload
         if let Ok(mut pending) = state.pending_payload.lock() {
             if let Some(payload) = pending.take() {
+                println!("[dropdown] Found pending payload, emitting and showing");
                 // Emit and Show
                 if let Some(win) = app.get_window("dropdown") {
                     let _ = win.emit("update-dropdown", payload);
                     let _ = win.show();
+                    let _ = win.set_always_on_top(true);
                 }
             }
         }
     }
 }
 
-// NEW Command to set exact bounds from frontend
-// Input: Logical coordinates relative to Main Window Content Area
 #[tauri::command]
 fn set_dropdown_bounds(app: AppHandle, x: f64, y: f64, width: f64, height: f64) {
+    println!("[dropdown] set_dropdown_bounds called: x={}, y={}, width={}, height={}", x, y, width, height);
+    
     if let Some(main) = app.get_window("main") {
-        if let Ok(main_pos) = main.inner_position() {
-             if let Ok(scale_factor) = main.scale_factor() {
-                 let screen_x = main_pos.x + (x * scale_factor) as i32;
-                 let screen_y = main_pos.y + (y * scale_factor) as i32;
-                 let screen_w = (width * scale_factor) as u32;
-                 let screen_h = (height * scale_factor) as u32;
+        match main.inner_position() {
+            Ok(content_pos) => {
+                match main.scale_factor() {
+                    Ok(scale_factor) => {
+                        // inner_position gives the top-left of the content area (below titlebar)
+                        // x, y are logical coordinates within the content area
+                        let screen_x = content_pos.x + (x * scale_factor) as i32;
+                        let screen_y = content_pos.y + (y * scale_factor) as i32;
+                        let screen_w = (width * scale_factor) as u32;
+                        let screen_h = (height * scale_factor) as u32;
+                        
+                        println!("[dropdown] content_pos: ({}, {}), screen pos: ({}, {}), size: ({}, {}), scale: {}", 
+                            content_pos.x, content_pos.y, screen_x, screen_y, screen_w, screen_h, scale_factor);
 
-                 if let Some(dd) = app.get_window("dropdown") {
-                    let _ = dd.set_position(tauri::Position::Physical(PhysicalPosition::new(screen_x, screen_y)));
-                    let _ = dd.set_size(tauri::Size::Physical(PhysicalSize::new(screen_w, screen_h)));
-                 }
-             }
+                        if let Some(dd) = app.get_window("dropdown") {
+                            let pos_result = dd.set_position(tauri::Position::Physical(PhysicalPosition::new(screen_x, screen_y)));
+                            let size_result = dd.set_size(tauri::Size::Physical(PhysicalSize::new(screen_w, screen_h)));
+                            println!("[dropdown] set_position result: {:?}, set_size result: {:?}", pos_result, size_result);
+                        } else {
+                            println!("[dropdown] ERROR: dropdown window not found!");
+                        }
+                    },
+                    Err(e) => println!("[dropdown] ERROR getting scale_factor: {:?}", e),
+                }
+            },
+            Err(e) => println!("[dropdown] ERROR getting inner_position: {:?}", e),
         }
+    } else {
+        println!("[dropdown] ERROR: main window not found!");
     }
 }
 
 #[tauri::command]
 fn update_dropdown(app: AppHandle, state: tauri::State<AppState>, query: String, results: Vec<serde_json::Value>, selected_index: i32) {
-    println!("[dropdown] update_dropdown results={} selected_index={}", results.len(), selected_index);
-    if let Ok(ready) = state.dropdown_ready.lock() {
-        let payload = DropdownPayload { query, results: results.clone(), selectedIndex: selected_index };
-        
-        if !*ready {
-            // Queue it
-             if let Ok(mut pending) = state.pending_payload.lock() {
-                 *pending = Some(payload);
-             }
-             return;
+    println!("[dropdown] update_dropdown called: results={}, selected_index={}, query='{}'", results.len(), selected_index, query);
+    
+    let is_ready = state.dropdown_ready.lock().map(|r| *r).unwrap_or(false);
+    let payload = DropdownPayload { query: query.clone(), results: results.clone(), selectedIndex: selected_index };
+    
+    if !is_ready {
+        println!("[dropdown] Dropdown not ready yet, queuing payload");
+        if let Ok(mut pending) = state.pending_payload.lock() {
+            *pending = Some(payload);
         }
-        
-        if let Some(win) = app.get_window("dropdown") {
-            if results.is_empty() {
-                 let _ = win.hide();
-                 return;
-            }
+        return;
+    }
+    
+    if let Some(win) = app.get_window("dropdown") {
+        if results.is_empty() {
+            println!("[dropdown] No results, hiding dropdown");
+            let hide_result = win.hide();
+            println!("[dropdown] hide() result: {:?}", hide_result);
+            return;
+        }
 
-            // Emit payload FIRST
-            let _ = win.emit("update-dropdown", payload);
-            
-            // Show window WITHOUT stealing focus
-            let _ = win.show();
+        // Emit payload FIRST
+        let emit_result = win.emit("update-dropdown", payload);
+        println!("[dropdown] emit result: {:?}", emit_result);
+        
+        // Show window WITHOUT stealing focus
+        let show_result = win.show();
+        println!("[dropdown] show() result: {:?}", show_result);
+        
+        // Force always on top to ensure visibility
+        let aot_result = win.set_always_on_top(true);
+        println!("[dropdown] set_always_on_top result: {:?}", aot_result);
+        
+        // Immediately refocus main window to prevent dropdown from stealing focus
+        if let Some(main) = app.get_window("main") {
+            let main_focus = main.set_focus();
+            println!("[dropdown] refocused main window result: {:?}", main_focus);
         }
+    } else {
+        println!("[dropdown] ERROR: dropdown window not found in update_dropdown!");
     }
 }
 
@@ -440,16 +476,22 @@ fn main() {
                 tauri::WebviewUrl::App("dropdown.html".into())
             )
             .title("Dropdown")
-            .inner_size(800.0, 400.0)
+            .inner_size(400.0, 300.0) // Smaller default size
             .decorations(false)
-            // .transparent(true) // transparency feature might define this, disabled for build fix
             .visible(false)
             .always_on_top(true) 
             .skip_taskbar(true)
             .focused(false) // Don't take focus
-            //.focusable(false) // Not available in standard tauri 2.0 window builder yet without traits, relying on focused(false) + platform behavior
-            .visible(false) // Start hidden
             .build();
+            
+            match dropdown_window {
+                Ok(win) => {
+                    println!("[dropdown] Dropdown window created successfully: {:?}", win.label());
+                },
+                Err(e) => {
+                    println!("[dropdown] ERROR: Failed to create dropdown window: {:?}", e);
+                }
+            }
 
             // Handle menu events
             let handle_for_menu = handle.clone();
@@ -659,9 +701,6 @@ fn main() {
             focus_toolbar,
             focus_content,
             spa_navigate,
-            search_history,
-            update_dropdown,
-            navigate_from_dropdown,
             search_history,
             update_dropdown,
             navigate_from_dropdown,
