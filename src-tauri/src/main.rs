@@ -7,13 +7,16 @@ use serde::{Deserialize, Serialize};
 use std::time::{Instant, Duration, SystemTime, UNIX_EPOCH};
 
 use tauri_plugin_clipboard_manager::ClipboardExt;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 mod history;
 use history::{HistoryStore, HistoryEntryScoped};
 
 mod adblock_manager;
 use adblock_manager::AdBlockManager;
+
+mod settings;
+use settings::Settings;
 
 // --- Layout Constants ---
 const TAB_BAR_HEIGHT: f64 = 40.0;
@@ -39,6 +42,7 @@ struct Tab {
 // State wrapper for HistoryStore, Tabs, and AdBlocking
 struct AppState {
     history: Arc<HistoryStore>,
+    settings: Arc<RwLock<Settings>>,
     dropdown_ready: Arc<Mutex<bool>>,
     pending_payload: Arc<Mutex<Option<DropdownPayload>>>,
     // Tab State
@@ -146,7 +150,7 @@ fn show_suggestion_window(app: &AppHandle) {
 // 3. It does NOT send any data to autocomplete servers.
 // 4. The only external request happens when the user explicitly commits navigation (Enter/Go),
 //    at which point the Webview initiates a standard navigation.
-fn smart_parse_url(input: &str) -> String {
+fn smart_parse_url(input: &str, settings: &Settings) -> String {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return "about:blank".to_string();
@@ -174,10 +178,11 @@ fn smart_parse_url(input: &str) -> String {
         }
     }
 
-    // 3. Heuristic: Dot implies domain? -> Try HTTPS
+    // 3. Heuristic: Dot implies domain? -> Try HTTPS (or HTTP if https_only is false)
     // (Exclude spaces which imply search)
     if !trimmed.contains(' ') && trimmed.contains('.') && !trimmed.ends_with('.') {
-        let candidate = format!("https://{}", trimmed);
+        let scheme = if settings.https_only { "https" } else { "http" };
+        let candidate = format!("{}://{}", scheme, trimmed);
         if let Ok(u) = Url::parse(&candidate) {
             if u.host().is_some() {
                 return u.to_string();
@@ -185,9 +190,8 @@ fn smart_parse_url(input: &str) -> String {
         }
     }
 
-    // 4. Fallback to Search
-    let q = urlencoding::encode(trimmed);
-    format!("https://duckduckgo.com/?q={}", q)
+    // 4. Fallback to configured Search Engine
+    settings.search_engine.query_url(trimmed)
 }
 
 // --- Ad Blocking: Request Type Detection ---
@@ -280,6 +284,29 @@ fn save_suggestion(app: AppHandle, text: String) -> Result<(), String> {
     save_suggestion_to_file(&app, text)
 }
 
+// --- Settings Commands ---
+#[tauri::command]
+fn get_settings(state: tauri::State<AppState>) -> Settings {
+    state.settings.read().unwrap().clone()
+}
+
+#[tauri::command]
+fn save_settings(app: AppHandle, state: tauri::State<AppState>, settings: Settings) -> Result<(), String> {
+    // 1. Save to disk (atomic write)
+    settings.save(&app)?;
+    
+    // 2. Update memory
+    {
+        let mut s = state.settings.write().unwrap();
+        *s = settings.clone();
+    }
+    
+    // 3. Propagate changes immediately to all windows
+    app.emit("settings-update", settings).map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
 // --- Default Browser: Get pending launch URL for Cold Start ---
 #[tauri::command]
 fn get_pending_launch_url(state: tauri::State<AppState>) -> Option<String> {
@@ -323,10 +350,13 @@ fn create_tab_with_url(app: &AppHandle, state: &AppState, url_str: String) -> Re
     
     println!("[Tabs] Creating new tab: {} ({})", tab_id, url_str);
 
+    // Read settings
+    let settings = state.settings.read().unwrap();
+
     let initial_url = if url_str.is_empty() {
-        Url::parse("https://duckduckgo.com").unwrap()
+        Url::parse(&settings.homepage).unwrap_or_else(|_| Url::parse("https://duckduckgo.com").unwrap())
     } else {
-        Url::parse(&smart_parse_url(&url_str)).unwrap_or_else(|_| Url::parse("https://duckduckgo.com").unwrap())
+        Url::parse(&smart_parse_url(&url_str, &settings)).unwrap_or_else(|_| Url::parse(&settings.homepage).unwrap())
     };
 
     // --- SECURITY & FINGERPRINTING CONFIGURATION ---
@@ -873,7 +903,10 @@ fn clear_site_data(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn navigate(app: AppHandle, state: tauri::State<AppState>, url: String) {
-    let final_url = smart_parse_url(&url);
+    // Read settings for parsing
+    let settings = state.settings.read().unwrap();
+    let final_url = smart_parse_url(&url, &settings);
+    drop(settings); // Release read lock before history write
 
     // Record intent to visit (typed)
     state.history.add_visit(final_url.clone(), None, true);
@@ -1141,6 +1174,9 @@ fn main() {
             let app_data_dir = app.path().app_data_dir().expect("failed to get app data dir");
             let history_store = Arc::new(HistoryStore::new(app_data_dir));
             
+            // Initialize Settings (load from disk or default)
+            let settings = Arc::new(RwLock::new(Settings::load(app.handle())));
+            
             // Initialize Ad Blocking Engine
             let adblock_manager = Arc::new(AdBlockManager::new(app.handle()));
             
@@ -1149,6 +1185,7 @@ fn main() {
             
             app.manage(AppState { 
                 history: history_store,
+                settings: settings,
                 dropdown_ready: Arc::new(Mutex::new(false)),
                 pending_payload: Arc::new(Mutex::new(None)),
                 tabs: Arc::new(Mutex::new(Vec::new())),
@@ -1578,6 +1615,9 @@ fn main() {
             handle_title_change,
             handle_favicon_change,
             get_pending_launch_url,
+            // Settings Commands
+            get_settings,
+            save_settings,
             // Ad Blocking Commands
             get_cosmetic_rules,
             set_site_exception,
@@ -1593,47 +1633,49 @@ mod tests {
 
     #[test]
     fn test_smart_parse_url() {
+        let s = Settings::default();
+        
         // Standard URLs - Expect normalization (trailing slash)
-        assert_eq!(smart_parse_url("https://example.com"), "https://example.com/");
-        assert_eq!(smart_parse_url("http://example.com"), "http://example.com/");
-        assert_eq!(smart_parse_url("about:blank"), "about:blank");
+        assert_eq!(smart_parse_url("https://example.com", &s), "https://example.com/");
+        assert_eq!(smart_parse_url("http://example.com", &s), "http://example.com/");
+        assert_eq!(smart_parse_url("about:blank", &s), "about:blank");
         
         // Localhost / IPs
-        assert_eq!(smart_parse_url("localhost"), "http://localhost/");
-        assert_eq!(smart_parse_url("localhost:3000"), "http://localhost:3000/");
-        assert_eq!(smart_parse_url("127.0.0.1"), "http://127.0.0.1/");
-        assert_eq!(smart_parse_url("192.168.1.10"), "http://192.168.1.10/");
+        assert_eq!(smart_parse_url("localhost", &s), "http://localhost/");
+        assert_eq!(smart_parse_url("localhost:3000", &s), "http://localhost:3000/");
+        assert_eq!(smart_parse_url("127.0.0.1", &s), "http://127.0.0.1/");
+        assert_eq!(smart_parse_url("192.168.1.10", &s), "http://192.168.1.10/");
         
         // Domains without scheme
-        assert_eq!(smart_parse_url("example.com"), "https://example.com/");
-        assert_eq!(smart_parse_url("sub.domain.co.uk"), "https://sub.domain.co.uk/");
+        assert_eq!(smart_parse_url("example.com", &s), "https://example.com/");
+        assert_eq!(smart_parse_url("sub.domain.co.uk", &s), "https://sub.domain.co.uk/");
         // Params/Fragment preserved
-        assert_eq!(smart_parse_url("google.com/test?x=1#frag"), "https://google.com/test?x=1#frag");
+        assert_eq!(smart_parse_url("google.com/test?x=1#frag", &s), "https://google.com/test?x=1#frag");
         
-        // Search Queries
+        // Search Queries (uses default DuckDuckGo)
         let hello_encoded = urlencoding::encode("hello world");
-        assert_eq!(smart_parse_url("hello world"), format!("https://duckduckgo.com/?q={}", hello_encoded));
+        assert_eq!(smart_parse_url("hello world", &s), format!("https://duckduckgo.com/?q={}", hello_encoded));
         
         // Encoding Tests
         let cpp_encoded = urlencoding::encode("c++");
-        assert_eq!(smart_parse_url("c++"), format!("https://duckduckgo.com/?q={}", cpp_encoded));
+        assert_eq!(smart_parse_url("c++", &s), format!("https://duckduckgo.com/?q={}", cpp_encoded));
         
         let ampersand_encoded = urlencoding::encode("hello & world");
-        assert_eq!(smart_parse_url("hello & world"), format!("https://duckduckgo.com/?q={}", ampersand_encoded));
+        assert_eq!(smart_parse_url("hello & world", &s), format!("https://duckduckgo.com/?q={}", ampersand_encoded));
         
         let unicode_encoded = urlencoding::encode("café");
-        assert_eq!(smart_parse_url("café"), format!("https://duckduckgo.com/?q={}", unicode_encoded));
+        assert_eq!(smart_parse_url("café", &s), format!("https://duckduckgo.com/?q={}", unicode_encoded));
 
         // Additional User Requested Tests
         let cpp_pointers = urlencoding::encode("c++ pointers");
-        assert_eq!(smart_parse_url("c++ pointers"), format!("https://duckduckgo.com/?q={}", cpp_pointers));
+        assert_eq!(smart_parse_url("c++ pointers", &s), format!("https://duckduckgo.com/?q={}", cpp_pointers));
         
         let cafe_near_me = urlencoding::encode("café near me");
-        assert_eq!(smart_parse_url("café near me"), format!("https://duckduckgo.com/?q={}", cafe_near_me));
+        assert_eq!(smart_parse_url("café near me", &s), format!("https://duckduckgo.com/?q={}", cafe_near_me));
         
         
         let quotes_amp = urlencoding::encode("hello \"world\" & others");
-        assert_eq!(smart_parse_url("hello \"world\" & others"), format!("https://duckduckgo.com/?q={}", quotes_amp));
+        assert_eq!(smart_parse_url("hello \"world\" & others", &s), format!("https://duckduckgo.com/?q={}", quotes_amp));
     }
 }
 

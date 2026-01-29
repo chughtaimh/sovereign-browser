@@ -4,7 +4,9 @@
   "local": true,
   "windows": [
     "main",
-    "dropdown"
+    "dropdown",
+    "settings",
+    "suggestion"
   ],
   "permissions": [
     "core:default",
@@ -13,6 +15,7 @@
     "dialog:default",
     "core:webview:allow-set-webview-focus",
     "core:window:allow-create",
+    "core:window:allow-close",
     "core:event:allow-emit",
     "deep-link:default"
   ]

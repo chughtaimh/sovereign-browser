@@ -21,6 +21,104 @@
             --ghost-color: #808080;
         }
 
+        /* Light Theme - Comprehensive overrides */
+        body.light-theme {
+            --bg-color: #f5f5f5;
+            --toolbar-bg: #e8e8e8;
+            --input-bg: #ffffff;
+            --input-border: #c0c0c0;
+            --text-color: #333333;
+            --dropdown-bg: rgba(255, 255, 255, 0.98);
+            --dropdown-hover: #e8e8e8;
+            --ghost-color: #999999;
+        }
+
+        /* Light theme: Override hardcoded toolbar gradient */
+        body.light-theme #toolbar {
+            background: linear-gradient(to bottom, #f0f0f0, #e0e0e0);
+            border-bottom: 1px solid #c0c0c0;
+        }
+
+        /* Light theme: Override tab bar */
+        body.light-theme #tab-bar {
+            background: #e8e8e8;
+        }
+
+        /* Light theme: Tabs */
+        body.light-theme .tab {
+            background: #d8d8d8;
+            color: #333;
+        }
+
+        body.light-theme .tab:hover {
+            background: #c8c8c8;
+        }
+
+        body.light-theme .tab.active {
+            background: #f5f5f5;
+            color: #000;
+        }
+
+        /* Light theme: Buttons */
+        body.light-theme button {
+            background: #e0e0e0;
+            border: 1px solid #c0c0c0;
+            color: #333;
+        }
+
+        body.light-theme button:hover {
+            background: #d0d0d0;
+            border-color: #b0b0b0;
+        }
+
+        body.light-theme button:active {
+            background: #c0c0c0;
+        }
+
+        /* Light theme: Suggestions */
+        body.light-theme .suggestion-item {
+            color: #333;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+        }
+
+        body.light-theme .suggestion-item.selected,
+        body.light-theme .suggestion-item:hover {
+            background: #e0e0e0;
+            color: #000;
+        }
+
+        body.light-theme .suggestion-icon {
+            background: #d0d0d0;
+        }
+
+        body.light-theme .suggestion-title {
+            color: #222;
+        }
+
+        body.light-theme .suggestion-url {
+            color: #666;
+        }
+
+        body.light-theme .match-highlight {
+            color: #000;
+        }
+
+        /* Compact Mode */
+        body.compact #toolbar {
+            height: 40px;
+            padding: 4px 8px;
+        }
+
+        body.compact #input-container {
+            height: 28px;
+        }
+
+        body.compact .nav-button {
+            width: 28px;
+            height: 28px;
+            font-size: 12px;
+        }
+
         *,
         *::before,
         *::after {
@@ -792,6 +890,40 @@
                 }
             }, 50);
         });
+
+        // ===== Settings Update Event (from Rust) =====
+        listen('settings-update', (event) => {
+            const settings = event.payload;
+
+            // Apply Theme
+            if (settings.theme === 'light') {
+                document.body.classList.add('light-theme');
+            } else {
+                document.body.classList.remove('light-theme');
+            }
+
+            // Apply Compact Mode
+            if (settings.compact_mode) {
+                document.body.classList.add('compact');
+            } else {
+                document.body.classList.remove('compact');
+            }
+        });
+
+        // ===== Load initial settings on startup =====
+        (async () => {
+            try {
+                const settings = await invoke('get_settings');
+                if (settings.theme === 'light') {
+                    document.body.classList.add('light-theme');
+                }
+                if (settings.compact_mode) {
+                    document.body.classList.add('compact');
+                }
+            } catch (e) {
+                console.error('Failed to load initial settings:', e);
+            }
+        })();
     </script>
 </body>
 

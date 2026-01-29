@@ -262,10 +262,10 @@
                     <div class="setting-description">Search engine used for address bar queries</div>
                 </div>
                 <select class="setting-select" id="search-engine">
-                    <option value="duckduckgo" selected>DuckDuckGo</option>
-                    <option value="google">Google</option>
-                    <option value="bing">Bing</option>
-                    <option value="brave">Brave Search</option>
+                    <option value="DuckDuckGo" selected>DuckDuckGo</option>
+                    <option value="Google">Google</option>
+                    <option value="Bing">Bing</option>
+                    <option value="Brave">Brave Search</option>
                 </select>
             </div>
         </div>
@@ -349,6 +349,7 @@
     <div class="notification" id="notification">Settings saved!</div>
 
     <script>
+        const { invoke } = window.__TAURI__.core;
         const { getCurrentWindow } = window.__TAURI__.window;
 
         const closeBtn = document.getElementById('close-btn');
@@ -356,7 +357,7 @@
         const notification = document.getElementById('notification');
 
         // Settings elements
-        const settings = {
+        const els = {
             homepage: document.getElementById('homepage'),
             searchEngine: document.getElementById('search-engine'),
             blockTrackers: document.getElementById('block-trackers'),
@@ -366,38 +367,41 @@
             compactMode: document.getElementById('compact-mode')
         };
 
-        // Load saved settings from localStorage
-        function loadSettings() {
-            const saved = localStorage.getItem('sovereign-settings');
-            if (saved) {
-                try {
-                    const data = JSON.parse(saved);
-                    if (data.homepage) settings.homepage.value = data.homepage;
-                    if (data.searchEngine) settings.searchEngine.value = data.searchEngine;
-                    if (data.blockTrackers !== undefined) settings.blockTrackers.checked = data.blockTrackers;
-                    if (data.httpsOnly !== undefined) settings.httpsOnly.checked = data.httpsOnly;
-                    if (data.clearOnExit !== undefined) settings.clearOnExit.checked = data.clearOnExit;
-                    if (data.theme) settings.theme.value = data.theme;
-                    if (data.compactMode !== undefined) settings.compactMode.checked = data.compactMode;
-                } catch (e) {
-                    console.error('Failed to load settings:', e);
-                }
+        // Load saved settings from Rust backend
+        async function loadSettings() {
+            try {
+                const s = await invoke('get_settings');
+                els.homepage.value = s.homepage;
+                els.searchEngine.value = s.search_engine; // Rust sends enum variant name
+                els.blockTrackers.checked = s.block_trackers;
+                els.httpsOnly.checked = s.https_only;
+                els.clearOnExit.checked = s.clear_on_exit;
+                els.theme.value = s.theme;
+                els.compactMode.checked = s.compact_mode;
+            } catch (e) {
+                console.error('Failed to load settings:', e);
             }
         }
 
-        // Save settings to localStorage
-        function saveSettings() {
-            const data = {
-                homepage: settings.homepage.value,
-                searchEngine: settings.searchEngine.value,
-                blockTrackers: settings.blockTrackers.checked,
-                httpsOnly: settings.httpsOnly.checked,
-                clearOnExit: settings.clearOnExit.checked,
-                theme: settings.theme.value,
-                compactMode: settings.compactMode.checked
+        // Save settings to Rust backend
+        async function saveSettings() {
+            const settings = {
+                homepage: els.homepage.value,
+                search_engine: els.searchEngine.value,
+                block_trackers: els.blockTrackers.checked,
+                https_only: els.httpsOnly.checked,
+                clear_on_exit: els.clearOnExit.checked,
+                theme: els.theme.value,
+                compact_mode: els.compactMode.checked
             };
-            localStorage.setItem('sovereign-settings', JSON.stringify(data));
-            showNotification();
+
+            try {
+                await invoke('save_settings', { settings });
+                showNotification();
+            } catch (e) {
+                console.error('Failed to save settings:', e);
+                alert('Failed to save: ' + e);
+            }
         }
 
         function showNotification() {
@@ -408,34 +412,33 @@
         }
 
         // Auto-save on change
-        Object.values(settings).forEach(el => {
-            el.addEventListener('change', saveSettings);
+        Object.values(els).forEach(el => {
+            if (el && (el.tagName === 'INPUT' || el.tagName === 'SELECT')) {
+                el.addEventListener('change', saveSettings);
+            }
         });
-        settings.homepage.addEventListener('input', saveSettings);
+        // Also save on input for homepage field
+        els.homepage.addEventListener('input', saveSettings);
 
         // Reset to defaults
-        resetBtn.addEventListener('click', () => {
-            settings.homepage.value = 'https://duckduckgo.com';
-            settings.searchEngine.value = 'duckduckgo';
-            settings.blockTrackers.checked = true;
-            settings.httpsOnly.checked = true;
-            settings.clearOnExit.checked = false;
-            settings.theme.value = 'dark';
-            settings.compactMode.checked = false;
-            saveSettings();
+        resetBtn.addEventListener('click', async () => {
+            els.homepage.value = 'https://duckduckgo.com';
+            els.searchEngine.value = 'DuckDuckGo';
+            els.blockTrackers.checked = true;
+            els.httpsOnly.checked = true;
+            els.clearOnExit.checked = false;
+            els.theme.value = 'dark';
+            els.compactMode.checked = false;
+            await saveSettings();
         });
 
-        // Close button
-        closeBtn.addEventListener('click', async () => {
-            const win = getCurrentWindow();
-            await win.close();
-        });
+        // Close button - now properly closes using Tauri v2 API
+        closeBtn.addEventListener('click', () => getCurrentWindow().close());
 
         // ESC key closes window
-        document.addEventListener('keydown', async (e) => {
+        document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
-                const win = getCurrentWindow();
-                await win.close();
+                getCurrentWindow().close();
             }
         });
 
