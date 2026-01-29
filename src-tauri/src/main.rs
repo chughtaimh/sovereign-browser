@@ -389,11 +389,14 @@ fn create_tab_with_url(app: &AppHandle, state: &AppState, url_str: String) -> Re
     let toolbar_height_physical = (TOTAL_TOOLBAR_HEIGHT * scale_factor) as u32;
     let content_height = physical_size.height.saturating_sub(toolbar_height_physical).max(100);
     
-    let _ = main_window.add_child(
+    let webview = main_window.add_child(
         builder,
         PhysicalPosition::new(0, toolbar_height_physical as i32),
         PhysicalSize::new(physical_size.width, content_height),
     ).map_err(|e| e.to_string())?;
+
+    // Apply platform-specific settings immediately using the handle
+    enable_back_forward_gestures(&webview);
 
     // 4. Update State
     let new_tab = Tab {
@@ -1432,4 +1435,24 @@ fn content_pointer_down(app: AppHandle) {
     if let Some(main) = app.get_window("main") {
         let _ = main.emit("content-focused", ());
     }
+}
+
+// --- Platform-Specific Gesture Helpers ---
+
+#[cfg(target_os = "macos")]
+fn enable_back_forward_gestures(webview: &tauri::Webview) {
+    use objc::{msg_send, sel, sel_impl};
+    use objc::runtime::YES;
+
+    unsafe {
+        let _ = webview.with_webview(|platform_webview| {
+            let wk_webview = platform_webview.inner() as *mut objc::runtime::Object;
+            let _: () = msg_send![wk_webview, setAllowsBackForwardNavigationGestures: YES];
+        });
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn enable_back_forward_gestures(_webview: &tauri::Webview) {
+    // No-op for Windows/Linux
 }
