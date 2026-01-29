@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewBuilder, PhysicalPosition, PhysicalSize, Window, Emitter, Listener, TitleBarStyle};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewBuilder, PhysicalPosition, PhysicalSize, Window, Emitter, TitleBarStyle};
 use tauri::menu::{MenuBuilder, SubmenuBuilder, PredefinedMenuItem, MenuItemBuilder};
 use url::Url;
 use std::fs;
@@ -9,51 +9,15 @@ use std::time::{Instant, Duration, SystemTime, UNIX_EPOCH};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use std::sync::{Arc, Mutex, RwLock};
 
-mod history;
-use history::{HistoryStore, HistoryEntryScoped};
+// Import from our library crate
+use sovereign_browser_lib::history::{HistoryStore, HistoryEntryScoped};
+use sovereign_browser_lib::adblock_manager::AdBlockManager;
+use sovereign_browser_lib::settings::Settings;
+use sovereign_browser_lib::state::{Tab, AppState, DropdownPayload};
+use sovereign_browser_lib::modules::navigation::smart_parse_url;
+#[cfg(not(target_os = "macos"))]
+use sovereign_browser_lib::modules::navigation::guess_request_type;
 
-mod adblock_manager;
-use adblock_manager::AdBlockManager;
-
-mod settings;
-use settings::Settings;
-
-// --- Layout Constants ---
-const TAB_BAR_HEIGHT: f64 = 40.0;
-const URL_BAR_HEIGHT: f64 = 56.0; // Includes padding
-const TOTAL_TOOLBAR_HEIGHT: f64 = TAB_BAR_HEIGHT + URL_BAR_HEIGHT;
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-struct Tab {
-    id: String,
-    webview_label: String,
-    title: String,
-    url: String,
-    favicon: Option<String>,
-    #[serde(skip)]
-    last_accessed: Option<Instant>, // Option to allow Default
-    is_loading: bool,
-    can_go_back: bool,
-    can_go_forward: bool,
-    last_focus_was_content: bool,
-    screenshot: Option<String>, // Base64 string for hibernation (placeholder)
-}
-
-// State wrapper for HistoryStore, Tabs, and AdBlocking
-struct AppState {
-    history: Arc<HistoryStore>,
-    settings: Arc<RwLock<Settings>>,
-    dropdown_ready: Arc<Mutex<bool>>,
-    pending_payload: Arc<Mutex<Option<DropdownPayload>>>,
-    // Tab State
-    tabs: Arc<Mutex<Vec<Tab>>>,
-    active_tab_id: Arc<Mutex<Option<String>>>,
-    last_tab_update_emit: Arc<Mutex<Instant>>,
-    // Default Browser: URL passed on cold start
-    pending_launch_url: Arc<Mutex<Option<String>>>,
-    // Ad Blocking (manages its own Safari rules cache internally)
-    adblock: Arc<AdBlockManager>,
-}
 
 #[derive(Serialize, Deserialize, Clone)]
 struct Suggestion {
@@ -141,82 +105,11 @@ fn show_suggestion_window(app: &AppHandle) {
     }
 }
 
-// Logic for parsing input into a navigable URL
-//
-// PRIVACY NOTICE:
-// This function performs purely local string manipulation and heuristics.
-// 1. It does NOT perform any DNS resolution or network reachability checks.
-// 2. It does NOT prefetch any content.
-// 3. It does NOT send any data to autocomplete servers.
-// 4. The only external request happens when the user explicitly commits navigation (Enter/Go),
-//    at which point the Webview initiates a standard navigation.
-fn smart_parse_url(input: &str, settings: &Settings) -> String {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return "about:blank".to_string();
-    }
+// --- Layout Constants ---
+const TAB_BAR_HEIGHT: f64 = 40.0;
+const URL_BAR_HEIGHT: f64 = 56.0; // Includes padding
+const TOTAL_TOOLBAR_HEIGHT: f64 = TAB_BAR_HEIGHT + URL_BAR_HEIGHT;
 
-    // 1. Force HTTP for implicit localhost/IP (if no scheme present)
-    let has_scheme_separator = trimmed.contains("://");
-    let is_localhost = trimmed.starts_with("localhost") || trimmed.starts_with("127.0.0.1");
-    let is_ip = trimmed.parse::<std::net::IpAddr>().is_ok();
-    
-    if (is_localhost || is_ip) && !has_scheme_separator {
-        let candidate = format!("http://{}", trimmed);
-        if let Ok(u) = Url::parse(&candidate) {
-            return u.to_string();
-        }
-    }
-
-    // 2. Try parsing as-is (valid scheme)
-    if let Ok(u) = Url::parse(trimmed) {
-        let s = u.scheme();
-        // Only accept if it's a known standard web/file scheme
-        // This prevents "google.com" being parsed as scheme "google"
-        if s == "http" || s == "https" || s == "file" || s == "about" || s == "data" {
-            return u.to_string();
-        }
-    }
-
-    // 3. Heuristic: Dot implies domain? -> Try HTTPS (or HTTP if https_only is false)
-    // (Exclude spaces which imply search)
-    if !trimmed.contains(' ') && trimmed.contains('.') && !trimmed.ends_with('.') {
-        let scheme = if settings.https_only { "https" } else { "http" };
-        let candidate = format!("{}://{}", scheme, trimmed);
-        if let Ok(u) = Url::parse(&candidate) {
-            if u.host().is_some() {
-                return u.to_string();
-            }
-        }
-    }
-
-    // 4. Fallback to configured Search Engine
-    settings.search_engine.query_url(trimmed)
-}
-
-// --- Ad Blocking: Request Type Detection ---
-// Guess the resource type based on URL extension (for adblock engine)
-fn guess_request_type(url: &str) -> String {
-    let lower = url.to_lowercase();
-    if lower.contains(".js") || lower.contains("javascript") {
-        "script".to_string()
-    } else if lower.contains(".css") {
-        "stylesheet".to_string()
-    } else if lower.contains(".png") || lower.contains(".jpg") || lower.contains(".jpeg")
-        || lower.contains(".gif") || lower.contains(".webp") || lower.contains(".svg")
-        || lower.contains(".ico")
-    {
-        "image".to_string()
-    } else if lower.contains(".woff") || lower.contains(".ttf") || lower.contains(".otf") {
-        "font".to_string()
-    } else if lower.contains(".mp4") || lower.contains(".webm") || lower.contains(".m3u8") {
-        "media".to_string()
-    } else if lower.contains("xmlhttprequest") || lower.contains("/api/") || lower.contains("/ajax/") {
-        "xmlhttprequest".to_string()
-    } else {
-        "other".to_string()
-    }
-}
 
 // --- Ad Blocking Commands ---
 
@@ -263,8 +156,8 @@ fn get_exceptions(state: tauri::State<AppState>) -> Vec<serde_json::Value> {
         .into_iter()
         .map(|(domain, expiry)| {
             let expiry_str = match expiry {
-                adblock_manager::RuleExpiry::Forever => "Forever".to_string(),
-                adblock_manager::RuleExpiry::Until(time) => {
+                sovereign_browser_lib::adblock_manager::RuleExpiry::Forever => "Forever".to_string(),
+                sovereign_browser_lib::adblock_manager::RuleExpiry::Until(time) => {
                     match time.duration_since(SystemTime::UNIX_EPOCH) {
                         Ok(d) => format!("{}", d.as_secs()),
                         Err(_) => "Expired".to_string(),
@@ -531,9 +424,10 @@ fn create_tab_with_url(app: &AppHandle, state: &AppState, url_str: String) -> Re
     
     // --- Ad Blocking: Network Request Interception ---
     // This is the hot path - fires for every resource (images, scripts, etc.)
+    #[cfg(not(target_os = "macos"))]
     let app_handle_for_adblock = app.clone();
     
-    builder = builder.on_web_resource_request(move |request, response| {
+    builder = builder.on_web_resource_request(move |_request, _response| {
         // OPTIMIZATION: On macOS, WKContentRuleList handles blocking efficiently.
         // Skip the Rust check to improve performance.
         #[cfg(target_os = "macos")]
@@ -541,14 +435,14 @@ fn create_tab_with_url(app: &AppHandle, state: &AppState, url_str: String) -> Re
 
         #[cfg(not(target_os = "macos"))]
         {
-            let url = request.uri().to_string();
+            let url = _request.uri().to_string();
             
             // Get initiator from Referer header
-            let source_url = request.headers()
+            let source_url = _request.headers()
                 .get("Referer")
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or_else(|| {
-                    request.headers()
+                    _request.headers()
                         .get("Origin")
                         .and_then(|v| v.to_str().ok())
                         .unwrap_or(&url)
@@ -561,12 +455,13 @@ fn create_tab_with_url(app: &AppHandle, state: &AppState, url_str: String) -> Re
             if let Some(state) = app_handle_for_adblock.try_state::<AppState>() {
                 if state.adblock.should_block_request(&url, source_url, &request_type) {
                     println!("[AdBlock] Blocked: {}", url);
-                    *response.status_mut() = http::StatusCode::FORBIDDEN;
-                    *response.body_mut() = std::borrow::Cow::Borrowed(b"Blocked by Sovereign Browser");
+                    *_response.status_mut() = http::StatusCode::FORBIDDEN;
+                    *_response.body_mut() = std::borrow::Cow::Borrowed(b"Blocked by Sovereign Browser");
                     return;
                 }
             }
         }
+
     });
     
     // Note: in Tauri v2, we should use `on_navigation` for internal link control if needed.
@@ -941,13 +836,6 @@ fn navigate_from_dropdown(app: AppHandle, state: tauri::State<AppState>, url: St
     navigate(app, state, url);
 }
 
-#[derive(Serialize, Clone)]
-struct DropdownPayload {
-    query: String,
-    results: Vec<serde_json::Value>, 
-    selectedIndex: i32,
-}
-
 #[tauri::command]
 fn dropdown_ready(app: AppHandle, state: tauri::State<AppState>) {
     println!("[dropdown] dropdown_ready called!");
@@ -1012,7 +900,7 @@ fn update_dropdown(app: AppHandle, state: tauri::State<AppState>, query: String,
     println!("[dropdown] update_dropdown called: results={}, selected_index={}, query='{}'", results.len(), selected_index, query);
     
     let is_ready = state.dropdown_ready.lock().map(|r| *r).unwrap_or(false);
-    let payload = DropdownPayload { query: query.clone(), results: results.clone(), selectedIndex: selected_index };
+    let payload = DropdownPayload { query: query.clone(), results: results.clone(), selected_index: selected_index };
     
     if !is_ready {
         println!("[dropdown] Dropdown not ready yet, queuing payload");
