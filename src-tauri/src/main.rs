@@ -200,7 +200,7 @@ fn generate_tab_id() -> String {
 
 #[tauri::command]
 async fn create_tab(app: AppHandle, state: tauri::State<'_, AppState>, url: String) -> Result<String, String> {
-    create_tab_with_url(&app, &state, url).await
+    create_tab_with_url(&app, &state, url)
 }
 
 // Initial script to track focus and clicks
@@ -218,7 +218,7 @@ const FOCUS_INJECTION_SCRIPT: &str = r#"
 })();
 "#;
 
-async fn create_tab_with_url(app: &AppHandle, state: &AppState, url_str: String) -> Result<String, String> {
+fn create_tab_with_url(app: &AppHandle, state: &AppState, url_str: String) -> Result<String, String> {
     let tab_id = generate_tab_id();
     let webview_label = format!("webview-{}", tab_id);
     
@@ -348,21 +348,25 @@ async fn create_tab_with_url(app: &AppHandle, state: &AppState, url_str: String)
     "#);
 
     // 2. target="_blank" Handler (Window Open)
-    // WARNING: This logic breaks "Popup Auth Flows" (like 'Sign in with Google' buttons on 3rd party sites).
-    // If a site opens a popup to login, you are severing the link between the popup and the parent.
-    // We will keep it for now as per your architecture, but note this risk.
+    // This intercepts window.open() and <a target="_blank"> requests.
     let app_handle_for_open = app.clone();
-    // builder = builder.on_window_creation(move |url, _target| {
-    //      println!("[Tabs] Intercepted new window request for: {:?}", url);
-    //      let handle = app_handle_for_open.clone();
-    //      let url_string = url.to_string();
-    //      tauri::async_runtime::spawn(async move {
-    //          if let Some(state) = handle.try_state::<AppState>() {
-    //              let _ = create_tab_with_url(&handle, &state, url_string).await;
-    //          }
-    //      });
-    //      false
-    // });
+    
+     builder = builder.on_new_window(move |initial_url, _features| {
+         println!("[Tabs] Intercepted new window request for: {:?}", initial_url);
+         
+         let handle = app_handle_for_open.clone();
+         let url_string = initial_url.to_string();
+         
+         tauri::async_runtime::spawn(async move {
+             if let Some(state) = handle.try_state::<AppState>() {
+                 let _ = create_tab_with_url(&handle, &state, url_string);
+             }
+         });
+
+         // Block the native window creation
+         // We use the Deny variant to prevent the new window from opening appropriately.
+         tauri::webview::NewWindowResponse::Deny
+    });
     
     // Note: in Tauri v2, we should use `on_navigation` for internal link control if needed.
     // .on_navigation(...)
@@ -376,7 +380,7 @@ async fn create_tab_with_url(app: &AppHandle, state: &AppState, url_str: String)
     let toolbar_height_physical = (TOTAL_TOOLBAR_HEIGHT * scale_factor) as u32;
     let content_height = physical_size.height.saturating_sub(toolbar_height_physical).max(100);
     
-    let _webview = main_window.add_child(
+    let _ = main_window.add_child(
         builder,
         PhysicalPosition::new(0, toolbar_height_physical as i32),
         PhysicalSize::new(physical_size.width, content_height),
@@ -404,17 +408,17 @@ async fn create_tab_with_url(app: &AppHandle, state: &AppState, url_str: String)
     
     // 5. Switch to it (Activate)
     // 5. Switch to it (Activate)
-    switch_tab_logic(app, state, tab_id.clone()).await?;
+    switch_tab_logic(app, state, tab_id.clone())?;
 
     Ok(tab_id)
 }
 
 #[tauri::command]
 async fn switch_tab(app: AppHandle, state: tauri::State<'_, AppState>, tab_id: String) -> Result<(), String> {
-    switch_tab_logic(&app, &state, tab_id).await
+    switch_tab_logic(&app, &state, tab_id)
 }
 
-async fn switch_tab_logic(app: &AppHandle, state: &AppState, tab_id: String) -> Result<(), String> {
+fn switch_tab_logic(app: &AppHandle, state: &AppState, tab_id: String) -> Result<(), String> {
     println!("[Tabs] Switching to tab: {}", tab_id);
 
     // 1. Hide Dropdown (Safety)
@@ -574,13 +578,15 @@ async fn close_tab_logic(app: &AppHandle, state: &AppState, tab_id: String) -> R
     // Switch if needed
     if was_active {
         if let Some(next_id) = next_tab_id {
-            switch_tab_logic(app, state, next_id).await?;
+            switch_tab_logic(app, state, next_id)?;
         } else {
              // No tabs left? Create a new one? Or close app? 
              // Chrome closes app on last tab close usually.
              // For now, let's create a new tab so app doesn't look broken
              // For now, let's create a new tab so app doesn't look broken
-             create_tab_with_url(app, state, "https://duckduckgo.com".to_string()).await?;
+             // Chromecast closes app on last tab close usually.
+             // For now, let's create a new tab so app doesn't look broken
+             let _ = create_tab_with_url(app, state, "https://duckduckgo.com".to_string());
         }
     }
     
@@ -1040,7 +1046,7 @@ fn main() {
                         let h = handle_for_menu.clone();
                         tauri::async_runtime::spawn(async move {
                             if let Some(state) = h.try_state::<AppState>() {
-                                let _ = create_tab_with_url(&h, &state, "https://duckduckgo.com".into()).await;
+                                let _ = create_tab_with_url(&h, &state, "https://duckduckgo.com".into());
                                 // Focus URL bar implicitly done by create_tab? 
                                 // Actually create_tab focuses content usually if URL provided, or we can force it here.
                                 // In the impl of create_tab, we switch to it. 
@@ -1089,7 +1095,7 @@ fn main() {
                                  }
 
                                  if let Some(tid) = target_id {
-                                     let _ = switch_tab_logic(&h, &state, tid).await;
+                                     let _ = switch_tab_logic(&h, &state, tid);
                                  }
                              }
                          });
@@ -1197,7 +1203,7 @@ fn main() {
                                             }
                                         };
                                         if let Some(tid) = target_id_opt {
-                                            let _ = switch_tab_logic(&h, &state, tid).await;
+                                            let _ = switch_tab_logic(&h, &state, tid);
                                         }
                                     }
                                 });
@@ -1215,7 +1221,7 @@ fn main() {
                 if let Some(state) = handle_for_startup.try_state::<AppState>() {
                     // Create defaults to "Home" (about:blank or passed arg)
                     // Currently hardcoded to Google for test, or about:blank
-                    let _ = create_tab_with_url(&handle_for_startup, &state, "https://duckduckgo.com".into()).await;
+                    let _ = create_tab_with_url(&handle_for_startup, &state, "https://duckduckgo.com".into());
                 }
             });
 

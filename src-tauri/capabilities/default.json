@@ -11,6 +11,7 @@
     "clipboard-manager:allow-write-text",
     "clipboard-manager:allow-read-text",
     "dialog:default",
-    "core:webview:allow-set-webview-focus"
+    "core:webview:allow-set-webview-focus",
+    "core:window:allow-create"
   ]
 }
