@@ -12,6 +12,9 @@ use std::sync::{Arc, Mutex};
 mod history;
 use history::{HistoryStore, HistoryEntryScoped};
 
+mod adblock_manager;
+use adblock_manager::AdBlockManager;
+
 // --- Layout Constants ---
 const TAB_BAR_HEIGHT: f64 = 40.0;
 const URL_BAR_HEIGHT: f64 = 56.0; // Includes padding
@@ -33,7 +36,7 @@ struct Tab {
     screenshot: Option<String>, // Base64 string for hibernation (placeholder)
 }
 
-// State wrapper for HistoryStore and Tabs
+// State wrapper for HistoryStore, Tabs, and AdBlocking
 struct AppState {
     history: Arc<HistoryStore>,
     dropdown_ready: Arc<Mutex<bool>>,
@@ -44,6 +47,8 @@ struct AppState {
     last_tab_update_emit: Arc<Mutex<Instant>>,
     // Default Browser: URL passed on cold start
     pending_launch_url: Arc<Mutex<Option<String>>>,
+    // Ad Blocking (manages its own Safari rules cache internally)
+    adblock: Arc<AdBlockManager>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -183,6 +188,91 @@ fn smart_parse_url(input: &str) -> String {
     // 4. Fallback to Search
     let q = urlencoding::encode(trimmed);
     format!("https://duckduckgo.com/?q={}", q)
+}
+
+// --- Ad Blocking: Request Type Detection ---
+// Guess the resource type based on URL extension (for adblock engine)
+fn guess_request_type(url: &str) -> String {
+    let lower = url.to_lowercase();
+    if lower.contains(".js") || lower.contains("javascript") {
+        "script".to_string()
+    } else if lower.contains(".css") {
+        "stylesheet".to_string()
+    } else if lower.contains(".png") || lower.contains(".jpg") || lower.contains(".jpeg")
+        || lower.contains(".gif") || lower.contains(".webp") || lower.contains(".svg")
+        || lower.contains(".ico")
+    {
+        "image".to_string()
+    } else if lower.contains(".woff") || lower.contains(".ttf") || lower.contains(".otf") {
+        "font".to_string()
+    } else if lower.contains(".mp4") || lower.contains(".webm") || lower.contains(".m3u8") {
+        "media".to_string()
+    } else if lower.contains("xmlhttprequest") || lower.contains("/api/") || lower.contains("/ajax/") {
+        "xmlhttprequest".to_string()
+    } else {
+        "other".to_string()
+    }
+}
+
+// --- Ad Blocking Commands ---
+
+#[tauri::command]
+fn get_cosmetic_rules(app: AppHandle, state: tauri::State<AppState>, url: String) {
+    let adblock = state.adblock.clone();
+    let app_clone = app.clone();
+    
+    tauri::async_runtime::spawn(async move {
+        let css = adblock.get_cosmetic_css(&url);
+        if !css.is_empty() {
+            let _ = app_clone.emit("apply-cosmetic-css", serde_json::json!({ "css": css }));
+        }
+    });
+}
+
+#[tauri::command]
+fn set_site_exception(state: tauri::State<AppState>, url: String, duration_type: String) {
+    let adblock = state.adblock.clone();
+    
+    // Extract domain from URL
+    if let Ok(parsed) = Url::parse(&url) {
+        if let Some(domain) = parsed.domain() {
+            let duration = match duration_type.as_str() {
+                "1hour" => Some(Duration::from_secs(3600)),
+                "24hours" => Some(Duration::from_secs(86400)),
+                "forever" => None,
+                "off" => {
+                    adblock.remove_exception(domain);
+                    return;
+                }
+                _ => return, // Invalid input
+            };
+            
+            adblock.add_exception(domain.to_string(), duration);
+        }
+    }
+}
+
+#[tauri::command]
+fn get_exceptions(state: tauri::State<AppState>) -> Vec<serde_json::Value> {
+    let exceptions = state.adblock.get_exceptions();
+    exceptions
+        .into_iter()
+        .map(|(domain, expiry)| {
+            let expiry_str = match expiry {
+                adblock_manager::RuleExpiry::Forever => "Forever".to_string(),
+                adblock_manager::RuleExpiry::Until(time) => {
+                    match time.duration_since(SystemTime::UNIX_EPOCH) {
+                        Ok(d) => format!("{}", d.as_secs()),
+                        Err(_) => "Expired".to_string(),
+                    }
+                }
+            };
+            serde_json::json!({
+                "domain": domain,
+                "expiry": expiry_str
+            })
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -376,6 +466,78 @@ fn create_tab_with_url(app: &AppHandle, state: &AppState, url_str: String) -> Re
          // We use the Deny variant to prevent the new window from opening appropriately.
          tauri::webview::NewWindowResponse::Deny
     });
+
+    // --- Ad Blocking: Cosmetic Filter Injection Script ---
+    // This script runs at document_start. Uses safer generic hiding.
+    const COSMETIC_FILTER_SCRIPT: &str = r#"
+        (function() {
+            // Safer Generic Hiding: Targets high-confidence ad containers only
+            const style = document.createElement('style');
+            style.id = 'sovereign-generic-hiding';
+            style.textContent = `
+                [id^="google_ads_iframe"], [id^="taboola-"], [id^="outbrain-"],
+                [class^="ad-container-"], .pub_300x250, .pub_728x90, .text-ad-links
+                { display: none !important; }
+            `;
+            (document.head || document.documentElement).appendChild(style);
+
+            // Async: Request specific rules
+            if (window.__TAURI__) {
+                window.__TAURI__.core.invoke('get_cosmetic_rules', { url: window.location.href });
+                
+                window.__TAURI__.event.listen('apply-cosmetic-css', (event) => {
+                    const css = event.payload.css;
+                    if (!css) return;
+                    const specificStyle = document.createElement('style');
+                    specificStyle.id = 'sovereign-site-hiding';
+                    specificStyle.textContent = css;
+                    (document.head || document.documentElement).appendChild(specificStyle);
+                });
+            }
+        })();
+    "#;
+
+    builder = builder.initialization_script(COSMETIC_FILTER_SCRIPT);
+    
+    // --- Ad Blocking: Network Request Interception ---
+    // This is the hot path - fires for every resource (images, scripts, etc.)
+    let app_handle_for_adblock = app.clone();
+    
+    builder = builder.on_web_resource_request(move |request, response| {
+        // OPTIMIZATION: On macOS, WKContentRuleList handles blocking efficiently.
+        // Skip the Rust check to improve performance.
+        #[cfg(target_os = "macos")]
+        { return; }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let url = request.uri().to_string();
+            
+            // Get initiator from Referer header
+            let source_url = request.headers()
+                .get("Referer")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_else(|| {
+                    request.headers()
+                        .get("Origin")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or(&url)
+                });
+            
+            // Determine request type from headers or URL
+            let request_type = guess_request_type(&url);
+            
+            // Check AdBlockManager (Windows/Linux only)
+            if let Some(state) = app_handle_for_adblock.try_state::<AppState>() {
+                if state.adblock.should_block_request(&url, source_url, &request_type) {
+                    println!("[AdBlock] Blocked: {}", url);
+                    *response.status_mut() = http::StatusCode::FORBIDDEN;
+                    *response.body_mut() = std::borrow::Cow::Borrowed(b"Blocked by Sovereign Browser");
+                    return;
+                }
+            }
+        }
+    });
     
     // Note: in Tauri v2, we should use `on_navigation` for internal link control if needed.
     // .on_navigation(...)
@@ -397,6 +559,15 @@ fn create_tab_with_url(app: &AppHandle, state: &AppState, url_str: String) -> Re
 
     // Apply platform-specific settings immediately using the handle
     enable_back_forward_gestures(&webview);
+    
+    // Apply content blocking rules on macOS
+    #[cfg(target_os = "macos")]
+    {
+        let rules = state.adblock.get_safari_rules();
+        if rules.len() > 2 {
+            apply_content_blocking_rules(&webview, &rules);
+        }
+    }
 
     // 4. Update State
     let new_tab = Tab {
@@ -970,6 +1141,12 @@ fn main() {
             let app_data_dir = app.path().app_data_dir().expect("failed to get app data dir");
             let history_store = Arc::new(HistoryStore::new(app_data_dir));
             
+            // Initialize Ad Blocking Engine
+            let adblock_manager = Arc::new(AdBlockManager::new(app.handle()));
+            
+            // Start background thread to fetch/update rules
+            adblock_manager.spawn_update_thread();
+            
             app.manage(AppState { 
                 history: history_store,
                 dropdown_ready: Arc::new(Mutex::new(false)),
@@ -977,8 +1154,40 @@ fn main() {
                 tabs: Arc::new(Mutex::new(Vec::new())),
                 active_tab_id: Arc::new(Mutex::new(None)),
                 last_tab_update_emit: Arc::new(Mutex::new(Instant::now())),
-                pending_launch_url: Arc::new(Mutex::new(None)), // Will be set below
+                pending_launch_url: Arc::new(Mutex::new(None)),
+                adblock: adblock_manager.clone(),
             });
+            
+            // macOS: Apply cached Safari rules to existing webviews after a delay
+            // (gives time for the first tab to be created)
+            #[cfg(target_os = "macos")]
+            {
+                let adblock_clone = adblock_manager.clone();
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    // Wait for rules to be ready and tabs to be created
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    
+                    let rules_json = adblock_clone.get_safari_rules();
+                    if rules_json.len() <= 2 {
+                        println!("[AdBlock] Safari rules not ready yet, will apply to new tabs only");
+                        return;
+                    }
+                    
+                    // Apply to all existing webviews
+                    println!("[AdBlock] Applying Safari rules to existing webviews...");
+                    if let Some(state) = app_handle.try_state::<AppState>() {
+                        let tabs = state.tabs.lock().unwrap();
+                        for tab in tabs.iter() {
+                            if let Some(webview) = app_handle.get_webview(&tab.webview_label) {
+                                println!("[AdBlock] Applying content blocking to: {}", tab.webview_label);
+                                apply_content_blocking_rules(&webview, &rules_json);
+                            }
+                        }
+                    }
+                    println!("[AdBlock] Safari content blocking setup complete!");
+                });
+            }
 
             // --- Deep Link: Handle URLs received via macOS AppleEvents ---
             #[cfg(target_os = "macos")]
@@ -1368,7 +1577,11 @@ fn main() {
             dropdown_ready,
             handle_title_change,
             handle_favicon_change,
-            get_pending_launch_url
+            get_pending_launch_url,
+            // Ad Blocking Commands
+            get_cosmetic_rules,
+            set_site_exception,
+            get_exceptions
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1455,4 +1668,90 @@ fn enable_back_forward_gestures(webview: &tauri::Webview) {
 #[cfg(not(target_os = "macos"))]
 fn enable_back_forward_gestures(_webview: &tauri::Webview) {
     // No-op for Windows/Linux
+}
+
+/// Apply Safari-compatible content blocking rules to a WKWebView.
+/// This blocks network requests at the WebKit level, not just hides elements.
+#[cfg(target_os = "macos")]
+fn apply_content_blocking_rules(webview: &tauri::Webview, rules_json: &str) {
+    use objc::{msg_send, sel, sel_impl, class};
+    use objc::runtime::Object;
+    use block::ConcreteBlock;
+    use std::ffi::CString;
+    
+    // Convert Rust string to NSString
+    fn to_nsstring(s: &str) -> *mut Object {
+        unsafe {
+            let ns_string_class = class!(NSString);
+            let string_c = CString::new(s).unwrap_or_else(|_| CString::new("").unwrap());
+            let ns_string: *mut Object = msg_send![ns_string_class, alloc];
+            let ns_string: *mut Object = msg_send![ns_string, initWithUTF8String: string_c.as_ptr()];
+            ns_string
+        }
+    }
+    
+    let rules = rules_json.to_string();
+    
+    unsafe {
+        let webview_result = webview.with_webview(move |platform_webview| {
+            let wk_webview = platform_webview.inner() as *mut Object;
+            
+            // Get WKContentRuleListStore.defaultStore
+            let store_class = class!(WKContentRuleListStore);
+            let store: *mut Object = msg_send![store_class, defaultStore];
+            
+            if store.is_null() {
+                println!("[AdBlock] WKContentRuleListStore.defaultStore is null");
+                return;
+            }
+            
+            // Get the WKUserContentController from the webview's configuration
+            let config: *mut Object = msg_send![wk_webview, configuration];
+            let user_content_controller: *mut Object = msg_send![config, userContentController];
+            
+            // Create rule identifier and rules NSString
+            let identifier = to_nsstring("SovereignBrowserAdBlock");
+            let rules_ns = to_nsstring(&rules);
+            
+            // Store the user content controller pointer for the completion block
+            let ucc = user_content_controller;
+            
+            // Create completion block for compileContentRuleListForIdentifier:encodedContentRuleList:completionHandler:
+            let completion_block = ConcreteBlock::new(move |rule_list: *mut Object, error: *mut Object| {
+                if error.is_null() && !rule_list.is_null() {
+                    println!("[AdBlock] Content rule list compiled successfully!");
+                    // Add the compiled rule list to the user content controller
+                    let _: () = msg_send![ucc, addContentRuleList: rule_list];
+                    println!("[AdBlock] Content blocking rules applied to webview!");
+                } else {
+                    if !error.is_null() {
+                        let description: *mut Object = msg_send![error, localizedDescription];
+                        let utf8: *const std::os::raw::c_char = msg_send![description, UTF8String];
+                        if !utf8.is_null() {
+                            let error_str = std::ffi::CStr::from_ptr(utf8).to_string_lossy();
+                            println!("[AdBlock] Failed to compile content rules: {}", error_str);
+                        }
+                    } else {
+                        println!("[AdBlock] Failed to compile content rules: unknown error");
+                    }
+                }
+            });
+            let completion_block = completion_block.copy();
+            
+            // Call compileContentRuleListForIdentifier:encodedContentRuleList:completionHandler:
+            println!("[AdBlock] Compiling content blocking rules ({} chars)...", rules.len());
+            let _: () = msg_send![store, compileContentRuleListForIdentifier:identifier 
+                                        encodedContentRuleList:rules_ns 
+                                        completionHandler:&*completion_block];
+        });
+        
+        if let Err(e) = webview_result {
+            println!("[AdBlock] Failed to access webview: {:?}", e);
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_content_blocking_rules(_webview: &tauri::Webview, _rules_json: &str) {
+    // No-op for Windows/Linux - they may use different mechanisms
 }

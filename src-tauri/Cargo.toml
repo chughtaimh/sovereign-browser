@@ -32,5 +32,16 @@ tauri-plugin-clipboard-manager = "2.3.2"
 tauri-plugin-dialog = "2.4.2"
 urlencoding = "2.1.3"
 
+# Ad Blocking
+# Note: We disable default-features to get Send+Sync on the Engine
+# content-blocking enables conversion to Safari's WKContentRuleList format
+adblock = { version = "0.12", default-features = false, features = ["embedded-domain-resolver", "content-blocking"] }
+bincode = "1.3"
+reqwest = { version = "0.11", features = ["blocking", "rustls-tls"] }
+http = "1"
+arc-swap = "1.7"
+dashmap = "5.5"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
+block = "0.1"
