@@ -17,6 +17,7 @@ use sovereign_browser_lib::state::{Tab, AppState, DropdownPayload};
 use sovereign_browser_lib::modules::navigation::smart_parse_url;
 #[cfg(not(target_os = "macos"))]
 use sovereign_browser_lib::modules::navigation::guess_request_type;
+use sovereign_browser_lib::modules::devtools::DevToolsManager;
 
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -175,6 +176,24 @@ fn get_exceptions(state: tauri::State<AppState>) -> Vec<serde_json::Value> {
 #[tauri::command]
 fn save_suggestion(app: AppHandle, text: String) -> Result<(), String> {
     save_suggestion_to_file(&app, text)
+}
+
+#[tauri::command]
+fn open_devtools(app: AppHandle, state: tauri::State<AppState>) {
+    let active_label = {
+        let active = state.active_tab_id.lock().unwrap();
+        let tabs = state.tabs.lock().unwrap();
+        active.as_ref().and_then(|id| tabs.iter().find(|t| &t.id == id).map(|t| t.webview_label.clone()))
+    };
+    
+    if let Some(label) = active_label {
+        if let Some(webview) = app.get_webview(&label) {
+            println!("[DevTools] Triggering loader for {}", label);
+            let _ = webview.eval("if (window.__SOVEREIGN_LOAD_DEVTOOLS__) window.__SOVEREIGN_LOAD_DEVTOOLS__();");
+            // Also open Chii frontend? Not strictly in this step, but eventually needed.
+            // For now, logging.
+        }
+    }
 }
 
 // --- Settings Commands ---
@@ -339,6 +358,7 @@ fn create_tab_with_url(app: &AppHandle, state: &AppState, url_str: String) -> Re
     .initialization_script(FOCUS_INJECTION_SCRIPT)
     .initialization_script(TITLE_LISTENER_SCRIPT)
     .initialization_script(FAVICON_LISTENER_SCRIPT)
+    .initialization_script(&state.devtools.get_bootstrapper())
     .initialization_script(r#"
         // SPA History Hook & Security Hardening
         (function() {
@@ -1069,7 +1089,12 @@ fn main() {
             let adblock_manager = Arc::new(AdBlockManager::new(app.handle()));
             
             // Start background thread to fetch/update rules
+            // Start background thread to fetch/update rules
             adblock_manager.spawn_update_thread();
+
+            // Initialize DevTools Manager
+            let devtools_manager = Arc::new(DevToolsManager::new(9222));
+            devtools_manager.clone().start();
             
             app.manage(AppState { 
                 history: history_store,
@@ -1081,6 +1106,7 @@ fn main() {
                 last_tab_update_emit: Arc::new(Mutex::new(Instant::now())),
                 pending_launch_url: Arc::new(Mutex::new(None)),
                 adblock: adblock_manager.clone(),
+                devtools: devtools_manager,
             });
             
             // macOS: Apply cached Safari rules to existing webviews after a delay
@@ -1509,7 +1535,8 @@ fn main() {
             // Ad Blocking Commands
             get_cosmetic_rules,
             set_site_exception,
-            get_exceptions
+            get_exceptions,
+            open_devtools
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

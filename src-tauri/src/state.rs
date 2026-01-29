@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::history::HistoryStore;
 use crate::settings::Settings;
 use crate::adblock_manager::AdBlockManager;
+use crate::modules::devtools::DevToolsManager;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Tab {
@@ -43,4 +44,5 @@ pub struct AppState {
     pub last_tab_update_emit: Arc<Mutex<Instant>>,
     pub pending_launch_url: Arc<Mutex<Option<String>>>,
     pub adblock: Arc<AdBlockManager>,
+    pub devtools: Arc<DevToolsManager>,
 }
