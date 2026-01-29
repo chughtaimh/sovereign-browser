@@ -386,6 +386,35 @@
         const dropdown = document.getElementById('autocomplete-dropdown');
         const ghost = document.getElementById('url-ghost');
 
+        // EXTERNAL LINK HANDLER (Hot Start)
+        listen('request-open-url', (event) => {
+            console.log('[External Link] Received:', event.payload);
+
+            // Payload is a string URL
+            const url = Array.isArray(event.payload) ? event.payload[0] : event.payload;
+
+            if (url && (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('file://'))) {
+                // UX RULE: External links must ALWAYS open a new tab.
+                invoke('create_tab', { url: url });
+            }
+        });
+
+        // COLD START CHECK: Ask Rust if a URL was passed on app launch
+        async function checkLaunchUrl() {
+            try {
+                const url = await invoke('get_pending_launch_url');
+                if (url) {
+                    console.log('[Cold Start] URL found:', url);
+                    invoke('create_tab', { url: url });
+                }
+            } catch (e) {
+                console.error('[Cold Start] Error checking launch URL:', e);
+            }
+        }
+
+        // Call immediately
+        checkLaunchUrl();
+
         window.addEventListener('unhandledrejection', (e) => {
             console.error('Unhandled rejection:', e.reason);
         });

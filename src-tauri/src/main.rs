@@ -42,6 +42,8 @@ struct AppState {
     tabs: Arc<Mutex<Vec<Tab>>>,
     active_tab_id: Arc<Mutex<Option<String>>>,
     last_tab_update_emit: Arc<Mutex<Instant>>,
+    // Default Browser: URL passed on cold start
+    pending_launch_url: Arc<Mutex<Option<String>>>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -186,6 +188,13 @@ fn smart_parse_url(input: &str) -> String {
 #[tauri::command]
 fn save_suggestion(app: AppHandle, text: String) -> Result<(), String> {
     save_suggestion_to_file(&app, text)
+}
+
+// --- Default Browser: Get pending launch URL for Cold Start ---
+#[tauri::command]
+fn get_pending_launch_url(state: tauri::State<AppState>) -> Option<String> {
+    let mut url = state.pending_launch_url.lock().unwrap();
+    url.take() // Return and clear
 }
 
 // --- Tab Management Commands ---
@@ -923,6 +932,26 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        // Single Instance: Handle "Hot Start" - focus existing window on second launch
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // For file paths passed as args (double-click on .html file)
+            let url = argv.iter().skip(1).find(|arg| {
+                arg.starts_with("/") && (arg.ends_with(".html") || arg.ends_with(".htm"))
+            });
+            
+            if let Some(raw_path) = url {
+                // Normalize: macOS passes /path/to/file.html, we need file://
+                let normalized = format!("file://{}", raw_path);
+                let _ = app.emit("request-open-url", &normalized);
+            }
+            
+            // Focus main window
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_focus();
+            }
+        }))
+        // Deep Link: Handle URLs via macOS AppleEvents (this is how http/https URLs are received)
+        .plugin(tauri_plugin_deep_link::init())
         .setup(move |app| {
             let main_window: Window = app.get_window("main").unwrap();
             
@@ -937,6 +966,7 @@ fn main() {
             // Initialize History Store
             let app_data_dir = app.path().app_data_dir().expect("failed to get app data dir");
             let history_store = Arc::new(HistoryStore::new(app_data_dir));
+            
             app.manage(AppState { 
                 history: history_store,
                 dropdown_ready: Arc::new(Mutex::new(false)),
@@ -944,7 +974,44 @@ fn main() {
                 tabs: Arc::new(Mutex::new(Vec::new())),
                 active_tab_id: Arc::new(Mutex::new(None)),
                 last_tab_update_emit: Arc::new(Mutex::new(Instant::now())),
+                pending_launch_url: Arc::new(Mutex::new(None)), // Will be set below
             });
+
+            // --- Deep Link: Handle URLs received via macOS AppleEvents ---
+            #[cfg(target_os = "macos")]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                
+                // Cold Start: Check for URLs that triggered app launch
+                if let Ok(Some(urls)) = app.deep_link().get_current() {
+                    if let Some(first_url) = urls.first() {
+                        let url_string = first_url.to_string();
+                        println!("[Deep Link] Cold Start URL: {}", url_string);
+                        
+                        // Store in pending state for frontend to retrieve
+                        if let Some(state) = app.try_state::<AppState>() {
+                            if let Ok(mut pending) = state.pending_launch_url.lock() {
+                                *pending = Some(url_string);
+                            }
+                        }
+                    }
+                }
+                
+                // Hot Start: Handle URLs opened while app is already running
+                let handle_for_deep_link = handle.clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        let url_string = url.to_string();
+                        println!("[Deep Link] Hot Start URL: {}", url_string);
+                        let _ = handle_for_deep_link.emit("request-open-url", &url_string);
+                        
+                        // Focus window
+                        if let Some(window) = handle_for_deep_link.get_webview_window("main") {
+                            let _ = window.set_focus();
+                        }
+                    }
+                });
+            }
 
             // --- Build Native Menu ---
             let sovereign_menu = SubmenuBuilder::new(app, "Sovereign")
@@ -1297,7 +1364,8 @@ fn main() {
             content_pointer_down,
             dropdown_ready,
             handle_title_change,
-            handle_favicon_change
+            handle_favicon_change,
+            get_pending_launch_url
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
