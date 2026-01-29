@@ -2,7 +2,8 @@
 // This file exposes all modules so they can be imported by main.rs
 // and tested independently.
 
-use tauri::Manager;
+
+// use tauri::Manager;
 
 // Core modules (existing)
 pub mod adblock_manager;

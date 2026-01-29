@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, Write};
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -78,7 +78,7 @@ impl HistoryStore {
         let entry_snapshot = {
             let mut index = self.index.lock().unwrap();
             
-            let mut entry = index.entry(normalized.clone()).or_insert(HistoryEntry {
+            let entry = index.entry(normalized.clone()).or_insert(HistoryEntry {
                 url: normalized.clone(),
                 title: title.clone().unwrap_or_default(),
                 last_visit: 0,

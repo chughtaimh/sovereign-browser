@@ -187,11 +187,41 @@ fn open_devtools(app: AppHandle, state: tauri::State<AppState>) {
     };
     
     if let Some(label) = active_label {
+        // 1. Trigger the specific tab to connect to bridge
         if let Some(webview) = app.get_webview(&label) {
             println!("[DevTools] Triggering loader for {}", label);
             let _ = webview.eval("if (window.__SOVEREIGN_LOAD_DEVTOOLS__) window.__SOVEREIGN_LOAD_DEVTOOLS__();");
-            // Also open Chii frontend? Not strictly in this step, but eventually needed.
-            // For now, logging.
+        }
+
+        // 2. Open the DevTools Frontend Window
+        if let Some(win) = app.get_window("devtools") {
+            let _ = win.set_focus();
+        } else {
+            // For MVP: Load the hosted Chii frontend which connects to our local bridge?
+            // Chii defaults to connecting to its own server. We need to point it to our WS.
+            // Actually, best to serve a minimal HTML that loads our target.js as a frontend?
+            // Or just use the bundled frontend assets.
+            // Since we don't have the assets bundled yet, we use a trick:
+            // We load a local HTML string that loads the chii frontend script from unpkg 
+            // and tells it to connect to localhost:9222.
+            
+            // NOTE: Chii frontend expects to be served relative to the backend usually.
+            // URL: https://chii.liriliri.io/front_end/chii_app.html?ws=localhost:9222/
+            
+            let devtools_url = "https://chii.liriliri.io/front_end/chii_app.html?ws=127.0.0.1:9222/client";
+            
+            let devtools_window = tauri::WebviewWindowBuilder::new(
+                &app,
+                "devtools",
+                tauri::WebviewUrl::External(Url::parse(devtools_url).unwrap())
+            )
+            .title("DevTools")
+            .inner_size(800.0, 600.0)
+            .build();
+
+            if let Err(e) = devtools_window {
+                println!("[DevTools] Failed to create window: {:?}", e);
+            }
         }
     }
 }
@@ -1209,6 +1239,8 @@ fn main() {
                 .separator()
                 .item(&MenuItemBuilder::with_id("next_tab", "Next Tab").accelerator("CmdOrCtrl+Shift+]").build(app)?)
                 .item(&MenuItemBuilder::with_id("prev_tab", "Previous Tab").accelerator("CmdOrCtrl+Shift+[").build(app)?)
+                .separator()
+                .item(&MenuItemBuilder::with_id("open_devtools", "Developer Tools").accelerator("CmdOrCtrl+Option+I").build(app)?)
                 .build()?;
 
             let history_menu = SubmenuBuilder::new(app, "History")
@@ -1415,6 +1447,14 @@ fn main() {
                                  }
                              }
                         }
+                    },
+                    "open_devtools" => {
+                        let h = handle_for_menu.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Some(state) = h.try_state::<AppState>() {
+                                open_devtools(h.clone(), state);
+                            }
+                        });
                     },
                     _ => {
                         // Numeric Shortcuts (tab_1 .. tab_9)
