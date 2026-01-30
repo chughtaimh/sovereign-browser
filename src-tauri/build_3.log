@@ -1,0 +1,423 @@
+   Compiling sovereign-browser v0.1.0 (/Users/mohammadchughtai/Documents/GitHub/sovereign-browser/src-tauri)
+    Checking reqwest v0.11.27
+error[E0428]: the name `TOTAL_TOOLBAR_HEIGHT` is defined multiple times
+   --> src/lib.rs:144:1
+    |
+ 41 | const TOTAL_TOOLBAR_HEIGHT: f64 = 78.0;
+    | --------------------------------------- previous definition of the value `TOTAL_TOOLBAR_HEIGHT` here
+...
+144 | const TOTAL_TOOLBAR_HEIGHT: f64 = TAB_BAR_HEIGHT + URL_BAR_HEIGHT;
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `TOTAL_TOOLBAR_HEIGHT` redefined here
+    |
+    = note: `TOTAL_TOOLBAR_HEIGHT` must be defined only once in the value namespace of this module
+
+error[E0428]: the name `resize_all_webviews` is defined multiple times
+   --> src/lib.rs:817:1
+    |
+ 44 | fn resize_all_webviews(app: &AppHandle, width: u32, height: u32, scale_factor: f64) {
+    | ----------------------------------------------------------------------------------- previous definition of the value `resize_all_webviews` here
+...
+817 | fn resize_all_webviews(app: &AppHandle, width: u32, height: u32, scale_factor: f64) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `resize_all_webviews` redefined here
+    |
+    = note: `resize_all_webviews` must be defined only once in the value namespace of this module
+
+error[E0255]: the name `devtools` is defined multiple times
+  --> src/lib.rs:20:5
+   |
+13 | pub mod devtools;
+   | ----------------- previous definition of the module `devtools` here
+...
+20 | use crate::devtools;
+   |     ^^^^^^^^^^^^^^^ `devtools` reimported here
+   |
+   = note: `devtools` must be defined only once in the type namespace of this module
+help: you can use `as` to change the binding name of the import
+   |
+20 | use crate::devtools as other_devtools;
+   |                     +++++++++++++++++
+
+error[E0433]: failed to resolve: use of unresolved module or unlinked crate `sovereign_browser_lib`
+   --> src/lib.rs:192:17
+    |
+192 |                 sovereign_browser_lib::adblock_manager::RuleExpiry::Forever => "Forever".to_string(),
+    |                 ^^^^^^^^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `sovereign_browser_lib`
+    |
+    = help: if you wanted to use a crate named `sovereign_browser_lib`, use `cargo add sovereign_browser_lib` to add it to your `Cargo.toml`
+help: consider importing this enum
+    |
+  1 + use crate::adblock_manager::RuleExpiry;
+    |
+help: if you import `RuleExpiry`, refer to it directly
+    |
+192 -                 sovereign_browser_lib::adblock_manager::RuleExpiry::Forever => "Forever".to_string(),
+192 +                 RuleExpiry::Forever => "Forever".to_string(),
+    |
+
+error[E0433]: failed to resolve: use of unresolved module or unlinked crate `sovereign_browser_lib`
+   --> src/lib.rs:193:17
+    |
+193 |                 sovereign_browser_lib::adblock_manager::RuleExpiry::Until(time) => {
+    |                 ^^^^^^^^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `sovereign_browser_lib`
+    |
+    = help: if you wanted to use a crate named `sovereign_browser_lib`, use `cargo add sovereign_browser_lib` to add it to your `Cargo.toml`
+help: consider importing this enum
+    |
+  1 + use crate::adblock_manager::RuleExpiry;
+    |
+help: if you import `RuleExpiry`, refer to it directly
+    |
+193 -                 sovereign_browser_lib::adblock_manager::RuleExpiry::Until(time) => {
+193 +                 RuleExpiry::Until(time) => {
+    |
+
+warning: unexpected `cfg` condition value: `cargo-clippy`
+    --> src/lib.rs:1444:25
+     |
+1444 |             let _: () = msg_send![wk_webview, setAllowsBackForwardNavigationGestures: YES];
+     |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: no expected values for `feature`
+     = note: using a cfg inside a macro will use the cfgs from the destination crate and not the ones from the defining crate
+     = help: try referring to `sel_impl` crate for guidance on how handle this unexpected cfg
+     = help: the macro `sel_impl` may come from an old version of the `objc` crate, try updating your dependency with `cargo update -p objc`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+     = note: `#[warn(unexpected_cfgs)]` on by default
+     = note: this warning originates in the macro `sel_impl` which comes from the expansion of the macro `msg_send` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unexpected `cfg` condition value: `cargo-clippy`
+    --> src/lib.rs:1466:35
+     |
+1466 |             let ns_string_class = class!(NSString);
+     |                                   ^^^^^^^^^^^^^^^^
+     |
+     = note: no expected values for `feature`
+     = note: using a cfg inside a macro will use the cfgs from the destination crate and not the ones from the defining crate
+     = help: try referring to `class` crate for guidance on how handle this unexpected cfg
+     = help: the macro `class` may come from an old version of the `objc` crate, try updating your dependency with `cargo update -p objc`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+     = note: this warning originates in the macro `class` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unexpected `cfg` condition value: `cargo-clippy`
+    --> src/lib.rs:1468:42
+     |
+1468 |             let ns_string: *mut Object = msg_send![ns_string_class, alloc];
+     |                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: no expected values for `feature`
+     = note: using a cfg inside a macro will use the cfgs from the destination crate and not the ones from the defining crate
+     = help: try referring to `sel_impl` crate for guidance on how handle this unexpected cfg
+     = help: the macro `sel_impl` may come from an old version of the `objc` crate, try updating your dependency with `cargo update -p objc`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+     = note: this warning originates in the macro `sel_impl` which comes from the expansion of the macro `msg_send` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unexpected `cfg` condition value: `cargo-clippy`
+    --> src/lib.rs:1469:42
+     |
+1469 |             let ns_string: *mut Object = msg_send![ns_string, initWithUTF8String: string_c.as_ptr()];
+     |                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: no expected values for `feature`
+     = note: using a cfg inside a macro will use the cfgs from the destination crate and not the ones from the defining crate
+     = help: try referring to `sel_impl` crate for guidance on how handle this unexpected cfg
+     = help: the macro `sel_impl` may come from an old version of the `objc` crate, try updating your dependency with `cargo update -p objc`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+     = note: this warning originates in the macro `sel_impl` which comes from the expansion of the macro `msg_send` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unexpected `cfg` condition value: `cargo-clippy`
+    --> src/lib.rs:1481:31
+     |
+1481 |             let store_class = class!(WKContentRuleListStore);
+     |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: no expected values for `feature`
+     = note: using a cfg inside a macro will use the cfgs from the destination crate and not the ones from the defining crate
+     = help: try referring to `class` crate for guidance on how handle this unexpected cfg
+     = help: the macro `class` may come from an old version of the `objc` crate, try updating your dependency with `cargo update -p objc`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+     = note: this warning originates in the macro `class` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unexpected `cfg` condition value: `cargo-clippy`
+    --> src/lib.rs:1482:38
+     |
+1482 |             let store: *mut Object = msg_send![store_class, defaultStore];
+     |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: no expected values for `feature`
+     = note: using a cfg inside a macro will use the cfgs from the destination crate and not the ones from the defining crate
+     = help: try referring to `sel_impl` crate for guidance on how handle this unexpected cfg
+     = help: the macro `sel_impl` may come from an old version of the `objc` crate, try updating your dependency with `cargo update -p objc`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+     = note: this warning originates in the macro `sel_impl` which comes from the expansion of the macro `msg_send` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unexpected `cfg` condition value: `cargo-clippy`
+    --> src/lib.rs:1490:39
+     |
+1490 |             let config: *mut Object = msg_send![wk_webview, configuration];
+     |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: no expected values for `feature`
+     = note: using a cfg inside a macro will use the cfgs from the destination crate and not the ones from the defining crate
+     = help: try referring to `sel_impl` crate for guidance on how handle this unexpected cfg
+     = help: the macro `sel_impl` may come from an old version of the `objc` crate, try updating your dependency with `cargo update -p objc`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+     = note: this warning originates in the macro `sel_impl` which comes from the expansion of the macro `msg_send` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unexpected `cfg` condition value: `cargo-clippy`
+    --> src/lib.rs:1491:56
+     |
+1491 |             let user_content_controller: *mut Object = msg_send![config, userContentController];
+     |                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: no expected values for `feature`
+     = note: using a cfg inside a macro will use the cfgs from the destination crate and not the ones from the defining crate
+     = help: try referring to `sel_impl` crate for guidance on how handle this unexpected cfg
+     = help: the macro `sel_impl` may come from an old version of the `objc` crate, try updating your dependency with `cargo update -p objc`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+     = note: this warning originates in the macro `sel_impl` which comes from the expansion of the macro `msg_send` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unexpected `cfg` condition value: `cargo-clippy`
+    --> src/lib.rs:1505:33
+     |
+1505 |                     let _: () = msg_send![ucc, addContentRuleList: rule_list];
+     |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: no expected values for `feature`
+     = note: using a cfg inside a macro will use the cfgs from the destination crate and not the ones from the defining crate
+     = help: try referring to `sel_impl` crate for guidance on how handle this unexpected cfg
+     = help: the macro `sel_impl` may come from an old version of the `objc` crate, try updating your dependency with `cargo update -p objc`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+     = note: this warning originates in the macro `sel_impl` which comes from the expansion of the macro `msg_send` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unexpected `cfg` condition value: `cargo-clippy`
+    --> src/lib.rs:1509:56
+     |
+1509 |                         let description: *mut Object = msg_send![error, localizedDescription];
+     |                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: no expected values for `feature`
+     = note: using a cfg inside a macro will use the cfgs from the destination crate and not the ones from the defining crate
+     = help: try referring to `sel_impl` crate for guidance on how handle this unexpected cfg
+     = help: the macro `sel_impl` may come from an old version of the `objc` crate, try updating your dependency with `cargo update -p objc`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+     = note: this warning originates in the macro `sel_impl` which comes from the expansion of the macro `msg_send` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unexpected `cfg` condition value: `cargo-clippy`
+    --> src/lib.rs:1510:65
+     |
+1510 |                         let utf8: *const std::os::raw::c_char = msg_send![description, UTF8String];
+     |                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: no expected values for `feature`
+     = note: using a cfg inside a macro will use the cfgs from the destination crate and not the ones from the defining crate
+     = help: try referring to `sel_impl` crate for guidance on how handle this unexpected cfg
+     = help: the macro `sel_impl` may come from an old version of the `objc` crate, try updating your dependency with `cargo update -p objc`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+     = note: this warning originates in the macro `sel_impl` which comes from the expansion of the macro `msg_send` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unexpected `cfg` condition value: `cargo-clippy`
+    --> src/lib.rs:1524:25
+     |
+1524 |               let _: () = msg_send![store, compileContentRuleListForIdentifier:identifier 
+     |  _________________________^
+1525 | |                                         encodedContentRuleList:rules_ns 
+1526 | |                                         completionHandler:&*completion_block];
+     | |_____________________________________________________________________________^
+     |
+     = note: no expected values for `feature`
+     = note: using a cfg inside a macro will use the cfgs from the destination crate and not the ones from the defining crate
+     = help: try referring to `sel_impl` crate for guidance on how handle this unexpected cfg
+     = help: the macro `sel_impl` may come from an old version of the `objc` crate, try updating your dependency with `cargo update -p objc`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+     = note: this warning originates in the macro `sel_impl` which comes from the expansion of the macro `msg_send` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unused import: `Window`
+ --> src/lib.rs:1:93
+  |
+1 | use tauri::{AppHandle, Manager, WebviewUrl, WebviewBuilder, PhysicalPosition, PhysicalSize, Window, Emitter, TitleBarStyle};
+  |                                                                                             ^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Path`
+ --> src/history.rs:4:17
+  |
+4 | use std::path::{Path, PathBuf};
+  |                 ^^^^
+
+warning: unused import: `crate::devtools`
+  --> src/lib.rs:20:5
+   |
+20 | use crate::devtools;
+   |     ^^^^^^^^^^^^^^^
+
+error[E0282]: type annotations needed
+   --> src/lib.rs:195:48
+    |
+195 |                         Ok(d) => format!("{}", d.as_secs()),
+    |                                                ^ cannot infer type
+
+error[E0308]: mismatched types
+   --> src/lib.rs:488:46
+    |
+488 |         let mut req_builder = client.request(request.method().clone(), &url);
+    |                                      ------- ^^^^^^^^^^^^^^^^^^^^^^^^ expected `reqwest::Method`, found `tauri::http::Method`
+    |                                      |
+    |                                      arguments to this method are incorrect
+    |
+note: two different versions of crate `http` are being used; two types coming from two different versions of the same crate are different types even if they look the same
+   --> /Users/mohammadchughtai/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/http-1.4.0/src/method.rs:45:1
+    |
+ 45 | pub struct Method(Inner);
+    | ^^^^^^^^^^^^^^^^^ this is the found type `tauri::http::Method`
+    |
+   ::: /Users/mohammadchughtai/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/http-0.2.12/src/method.rs:46:1
+    |
+ 46 | pub struct Method(Inner);
+    | ^^^^^^^^^^^^^^^^^ this is the expected type `reqwest::Method`
+    |
+   ::: src/adblock_manager.rs:106:31
+    |
+106 |             if let Ok(resp) = reqwest::blocking::get(*url) {
+    |                               ------- one version of crate `http` used here, as a dependency of crate `reqwest`
+    |
+   ::: src/lib.rs:1:5
+    |
+  1 | use tauri::{AppHandle, Manager, WebviewUrl, WebviewBuilder, PhysicalPosition, PhysicalSize, Window, Emitter, TitleBarStyle};
+    |     ----- one version of crate `http` used here, as a dependency of crate `tauri_utils`
+    = help: you can use `cargo tree` to explore your dependency tree
+note: method defined here
+   --> /Users/mohammadchughtai/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/reqwest-0.11.27/src/blocking/client.rs:981:12
+    |
+981 |     pub fn request<U: IntoUrl>(&self, method: Method, url: U) -> RequestBuilder {
+    |            ^^^^^^^
+
+error[E0277]: the trait bound `reqwest::header::HeaderName: From<&tauri::http::HeaderName>` is not satisfied
+   --> src/lib.rs:495:43
+    |
+495 |                 req_builder = req_builder.header(name, value);
+    |                                           ^^^^^^ the trait `From<&tauri::http::HeaderName>` is not implemented for `reqwest::header::HeaderName`
+    |
+    = help: the following other types implement trait `From<T>`:
+              `reqwest::header::HeaderName` implements `From<&reqwest::header::HeaderName>`
+              `reqwest::header::HeaderName` implements `From<reqwest::header::name::Custom>`
+              `reqwest::header::HeaderName` implements `From<reqwest::header::name::HdrName<'_>>`
+              `reqwest::header::HeaderName` implements `From<reqwest::header::name::StandardHeader>`
+    = note: required for `&tauri::http::HeaderName` to implement `Into<reqwest::header::HeaderName>`
+    = note: required for `reqwest::header::HeaderName` to implement `TryFrom<&tauri::http::HeaderName>`
+
+error[E0277]: the trait bound `reqwest::header::HeaderValue: From<&tauri::http::HeaderValue>` is not satisfied
+   --> src/lib.rs:495:43
+    |
+495 |                 req_builder = req_builder.header(name, value);
+    |                                           ^^^^^^ the trait `From<&tauri::http::HeaderValue>` is not implemented for `reqwest::header::HeaderValue`
+    |
+    = help: the following other types implement trait `From<T>`:
+              `reqwest::header::HeaderValue` implements `From<&reqwest::header::HeaderValue>`
+              `reqwest::header::HeaderValue` implements `From<i16>`
+              `reqwest::header::HeaderValue` implements `From<i32>`
+              `reqwest::header::HeaderValue` implements `From<i64>`
+              `reqwest::header::HeaderValue` implements `From<isize>`
+              `reqwest::header::HeaderValue` implements `From<reqwest::header::HeaderName>`
+              `reqwest::header::HeaderValue` implements `From<u16>`
+              `reqwest::header::HeaderValue` implements `From<u32>`
+            and 2 others
+    = note: required for `&tauri::http::HeaderValue` to implement `Into<reqwest::header::HeaderValue>`
+    = note: required for `reqwest::header::HeaderValue` to implement `TryFrom<&tauri::http::HeaderValue>`
+
+error[E0277]: the trait bound `tauri::http::StatusCode: From<reqwest::StatusCode>` is not satisfied
+   --> src/lib.rs:502:68
+    |
+502 |                 let mut builder = tauri::http::Response::builder().status(status);
+    |                                                                    ^^^^^^ the trait `From<reqwest::StatusCode>` is not implemented for `tauri::http::StatusCode`
+    |
+    = help: the trait `From<reqwest::StatusCode>` is not implemented for `tauri::http::StatusCode`
+            but trait `From<&tauri::http::StatusCode>` is implemented for it
+    = help: for that trait implementation, expected `&tauri::http::StatusCode`, found `reqwest::StatusCode`
+    = note: required for `reqwest::StatusCode` to implement `Into<tauri::http::StatusCode>`
+    = note: required for `tauri::http::StatusCode` to implement `TryFrom<reqwest::StatusCode>`
+
+error[E0277]: the trait bound `tauri::http::HeaderName: From<&reqwest::header::HeaderName>` is not satisfied
+   --> src/lib.rs:513:43
+    |
+513 |                         builder = builder.header(name, value);
+    |                                           ^^^^^^ the trait `From<&reqwest::header::HeaderName>` is not implemented for `tauri::http::HeaderName`
+    |
+    = help: the following other types implement trait `From<T>`:
+              `tauri::http::HeaderName` implements `From<&tauri::http::HeaderName>`
+              `tauri::http::HeaderName` implements `From<tauri::http::header::name::Custom>`
+              `tauri::http::HeaderName` implements `From<tauri::http::header::name::HdrName<'_>>`
+              `tauri::http::HeaderName` implements `From<tauri::http::header::name::StandardHeader>`
+    = note: required for `&reqwest::header::HeaderName` to implement `Into<tauri::http::HeaderName>`
+    = note: required for `tauri::http::HeaderName` to implement `TryFrom<&reqwest::header::HeaderName>`
+
+error[E0277]: the trait bound `tauri::http::HeaderValue: From<&reqwest::header::HeaderValue>` is not satisfied
+   --> src/lib.rs:513:43
+    |
+513 |                         builder = builder.header(name, value);
+    |                                           ^^^^^^ the trait `From<&reqwest::header::HeaderValue>` is not implemented for `tauri::http::HeaderValue`
+    |
+    = help: the following other types implement trait `From<T>`:
+              `tauri::http::HeaderValue` implements `From<&tauri::http::HeaderValue>`
+              `tauri::http::HeaderValue` implements `From<i16>`
+              `tauri::http::HeaderValue` implements `From<i32>`
+              `tauri::http::HeaderValue` implements `From<i64>`
+              `tauri::http::HeaderValue` implements `From<isize>`
+              `tauri::http::HeaderValue` implements `From<tauri::http::HeaderName>`
+              `tauri::http::HeaderValue` implements `From<u16>`
+              `tauri::http::HeaderValue` implements `From<u32>`
+            and 2 others
+    = note: required for `&reqwest::header::HeaderValue` to implement `Into<tauri::http::HeaderValue>`
+    = note: required for `tauri::http::HeaderValue` to implement `TryFrom<&reqwest::header::HeaderValue>`
+
+error[E0308]: mismatched types
+   --> src/lib.rs:526:33
+    |
+526 |                     *response = Some(final_resp);
+    |                     ---------   ^^^^^^^^^^^^^^^^ expected `Response<Cow<'_, [u8]>>`, found `Option<Response<Vec<u8>>>`
+    |                     |
+    |                     expected due to the type of this binding
+    |
+    = note: expected struct `tauri::http::Response<Cow<'static, [u8]>>`
+                 found enum `std::option::Option<tauri::http::Response<Vec<u8>>>`
+
+warning: unused variable: `file`
+  --> src/devtools.rs:47:33
+   |
+47 |                     if let Some(file) = Asset::get(relative_path) {
+   |                                 ^^^^ help: if this is intentional, prefix it with an underscore: `_file`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+  --> src/history.rs:81:17
+   |
+81 |             let mut entry = index.entry(normalized.clone()).or_insert(HistoryEntry {
+   |                 ----^^^^^
+   |                 |
+   |                 help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `app`
+   --> src/lib.rs:817:24
+    |
+817 | fn resize_all_webviews(app: &AppHandle, width: u32, height: u32, scale_factor: f64) {
+    |                        ^^^ help: if this is intentional, prefix it with an underscore: `_app`
+
+warning: unused variable: `rect`
+   --> src/lib.rs:820:9
+    |
+820 |     let rect = tauri::Rect {
+    |         ^^^^ help: if this is intentional, prefix it with an underscore: `_rect`
+
+warning: unused variable: `state`
+    --> src/lib.rs:1314:34
+     |
+1314 |                      if let Some(state) = h_evt.try_state::<AppState>() {
+     |                                  ^^^^^ help: if this is intentional, prefix it with an underscore: `_state`
+
+Some errors have detailed explanations: E0255, E0277, E0282, E0308, E0428, E0433.
+For more information about an error, try `rustc --explain E0255`.
+warning: `sovereign-browser` (lib) generated 20 warnings
+error: could not compile `sovereign-browser` (lib) due to 13 previous errors; 20 warnings emitted
