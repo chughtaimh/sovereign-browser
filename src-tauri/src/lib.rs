@@ -9,27 +9,14 @@ use std::time::{Instant, Duration, SystemTime, UNIX_EPOCH};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use std::sync::{Arc, Mutex, RwLock};
 
-// Modules
-pub mod devtools;
-pub mod adblock_manager;
-pub mod history;
-pub mod settings;
-pub mod state;
-pub mod modules;
-
-use crate::devtools;
-use crate::history::{HistoryStore, HistoryEntryScoped};
-use crate::adblock_manager::AdBlockManager;
-use crate::settings::Settings;
-use crate::state::{Tab, AppState, DropdownPayload};
-use crate::modules::navigation::smart_parse_url;
+// Import from our library crate
+use sovereign_browser_lib::history::{HistoryStore, HistoryEntryScoped};
+use sovereign_browser_lib::adblock_manager::AdBlockManager;
+use sovereign_browser_lib::settings::Settings;
+use sovereign_browser_lib::state::{Tab, AppState, DropdownPayload};
+use sovereign_browser_lib::modules::navigation::smart_parse_url;
 #[cfg(not(target_os = "macos"))]
-use crate::modules::navigation::guess_request_type;
-
-// State for DevTools
-pub struct DevToolsConfig {
-    pub port: u16,
-}
+use sovereign_browser_lib::modules::navigation::guess_request_type;
 
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -435,105 +422,47 @@ fn create_tab_with_url(app: &AppHandle, state: &AppState, url_str: String) -> Re
 
     builder = builder.initialization_script(COSMETIC_FILTER_SCRIPT);
     
-    // --- DevTools & AdBlocking Proxy ---
-    // This handler intercepts requests to:
-    // 1. Strip CSP headers (to allow DevTools injection)
-    // 2. Block Ads (on non-macOS, or if we want generic blocking)
+    // --- Ad Blocking: Network Request Interception ---
+    // This is the hot path - fires for every resource (images, scripts, etc.)
+    #[cfg(not(target_os = "macos"))]
+    let app_handle_for_adblock = app.clone();
     
-    // We need the port for injection (if we inject dynamically per request? No, injection is init script)
-    // But we need to allow the injection script to run.
-    
-    // NOTE: For 'Bundled Proxy', we use reqwest to fetch and strip headers.
-    
-    builder = builder.on_web_resource_request(move |request, response| {
-        let url = request.uri().to_string();
-        
-        // 1. Skip non-http/https (e.g. data:, blob:, tauri:)
-        if !url.starts_with("http") {
-             return;
-        }
+    builder = builder.on_web_resource_request(move |_request, _response| {
+        // OPTIMIZATION: On macOS, WKContentRuleList handles blocking efficiently.
+        // Skip the Rust check to improve performance.
+        #[cfg(target_os = "macos")]
+        { return; }
 
-        // 2. Generic Proxy Logic (The "Man-in-the-Middle")
-        // We MUST do this for main_frame and sub_resources to ensure CSP is stripped everywhere
-        // so our target.js can run and connect to websockets.
-        
-        let client = reqwest::blocking::Client::builder()
-            .danger_accept_invalid_certs(true) // For dev flexibility
-            .cookie_store(true) // Attempt to maintain cookies? (reqwest has its own store)
-            // Note: Sharing cookies with WKWebView is hard. 
-            // We rely on the 'Cookie' header being passed in 'request'.
-            .build()
-            .unwrap_or_default();
+        #[cfg(not(target_os = "macos"))]
+        {
+            let url = _request.uri().to_string();
             
-        let mut req_builder = client.request(request.method().clone(), &url);
-        
-        // Forward Request Headers
-        for (name, value) in request.headers() {
-            // "Host" is set by reqwest. "Accept-Encoding" handled automatically.
-            let key = name.as_str().to_lowercase();
-            if key != "host" && key != "accept-encoding" {
-                req_builder = req_builder.header(name, value);
+            // Get initiator from Referer header
+            let source_url = _request.headers()
+                .get("Referer")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_else(|| {
+                    _request.headers()
+                        .get("Origin")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or(&url)
+                });
+            
+            // Determine request type from headers or URL
+            let request_type = guess_request_type(&url);
+            
+            // Check AdBlockManager (Windows/Linux only)
+            if let Some(state) = app_handle_for_adblock.try_state::<AppState>() {
+                if state.adblock.should_block_request(&url, source_url, &request_type) {
+                    println!("[AdBlock] Blocked: {}", url);
+                    *_response.status_mut() = http::StatusCode::FORBIDDEN;
+                    *_response.body_mut() = std::borrow::Cow::Borrowed(b"Blocked by Sovereign Browser");
+                    return;
+                }
             }
         }
 
-        match req_builder.send() {
-            Ok(remote_resp) => {
-                let status = remote_resp.status();
-                let mut builder = tauri::http::Response::builder().status(status);
-                
-                // Forward Response Headers (Stripping Security Headers)
-                for (name, value) in remote_resp.headers() {
-                    let key = name.as_str().to_lowercase();
-                    if key != "content-security-policy" 
-                       && key != "content-security-policy-report-only"
-                       && key != "x-frame-options"
-                       && key != "content-encoding" // content is already decoded by reqwest
-                       && key != "content-length"   // recalculated by tauri
-                    {
-                        builder = builder.header(name, value);
-                    }
-                }
-                
-                // Read Body
-                let body = remote_resp.bytes().unwrap_or_default().to_vec();
-                
-                // AdBlock Check (Simple integration within proxy)
-                // Note: On macOS, we might rely on content filters, but this Proxy is authoritative.
-                // We can insert adblock check here if we want to block the *response* or *request*.
-                // For performance, let's just return the proxied content for now.
-                
-                if let Ok(final_resp) = builder.body(body) {
-                    *response = Some(final_resp);
-                }
-            },
-            Err(e) => {
-                println!("[Proxy] Error fetching {}: {}", url, e);
-                // Fallback: let WebView handle it (it might block due to CSP if we don't proxy, but better than blank)
-                // *response = None; 
-            }
-        }
     });
-
-    // --- DevTools Injection ---
-    // Update the injection script to use the dynamic port.
-    // We need to look up the port from State.
-    // Since create_tab is async/threaded, we can access state.
-    if let Some(devtools_cfg) = app.try_state::<DevToolsConfig>() {
-         let port = devtools_cfg.port;
-         let script = format!(
-            "(function() {{ 
-                if (window.__sovereign_devtools_injected) return;
-                window.__sovereign_devtools_injected = true;
-                var s = document.createElement('script'); 
-                s.src = 'http://127.0.0.1:{}/target.js'; 
-                s.onload = function() {{ console.log('[Sovereign] DevTools Agent Loaded'); }};
-                s.onerror = function(e) {{ console.error('[Sovereign] DevTools Agent Failed', e); }};
-                document.head.appendChild(s); 
-            }})();", 
-            port
-        );
-        builder = builder.initialization_script(&script);
-    }
     
     // Note: in Tauri v2, we should use `on_navigation` for internal link control if needed.
     // .on_navigation(...)

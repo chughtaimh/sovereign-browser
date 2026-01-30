@@ -10,7 +10,19 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "devtools": true,
+    "windows": [
+      {
+        "title": "Sovereign Browser",
+        "label": "main",
+        "width": 1024,
+        "height": 768,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      }
+    ],
     "security": {
       "csp": null
     }
