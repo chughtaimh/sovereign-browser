@@ -328,7 +328,7 @@
             padding-top: 4px;
             /* Space above tabs */
             gap: 4px;
-            /* THE RUNWAY: Entire strip is draggable */
+            /* THE RUNWAY: Entire strip is draggable via JS handler */
             overflow-x: auto;
             scrollbar-width: none;
             /* Hide scrollbar */
@@ -352,8 +352,8 @@
             flex: 1;
             color: #ccc;
             font-size: 12px;
-            cursor: pointer;
-            /* HOLES: Tabs absorb clicks */
+            cursor: grab;
+            /* Show grab cursor for draggable tabs */
             transition: background 0.1s;
             position: relative;
             border: 1px solid transparent;
@@ -371,6 +371,8 @@
             color: #fff;
             position: relative;
             z-index: 10;
+            border-top: 2px solid #007AFF;
+            /* Blue accent to indicate active tab */
         }
 
         /* Make the toolbar flush with the active tab */
@@ -392,6 +394,8 @@
             /* Placeholder */
             border-radius: 2px;
             flex-shrink: 0;
+            pointer-events: none;
+            /* Allow drag events to pass through to parent tab */
         }
 
         .tab-title {
@@ -399,6 +403,8 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            pointer-events: none;
+            /* Allow drag events to pass through to parent tab */
         }
 
         .tab-close {
@@ -413,6 +419,8 @@
             opacity: 0;
             /* Hidden by default */
             transition: all 0.1s;
+            pointer-events: auto;
+            /* Keep close button clickable */
         }
 
         .tab-close:hover {
@@ -422,6 +430,14 @@
 
         .tab:hover .tab-close {
             opacity: 1;
+        }
+
+        .tab.dragging {
+            cursor: grabbing;
+        }
+
+        .tab.drag-over {
+            border-left: 2px solid var(--accent-color);
         }
 
         #new-tab-btn {
@@ -592,10 +608,27 @@
             invoke('create_tab', { url: "https://duckduckgo.com" });
         });
 
+        // Track pending tabs update during drag
+        let pendingTabsUpdate = null;
+
         listen('update-tabs', (event) => {
             const { tabs, activeTabId } = event.payload;
+
+            // Don't re-render tabs while dragging (causes stale references and duplicates)
+            if (isDragging) {
+                console.log('[Tabs] Deferring update-tabs during drag');
+                pendingTabsUpdate = { tabs, activeTabId };
+                return;
+            }
+
             renderTabs(tabs, activeTabId);
         });
+
+        // Tab Reordering State
+        let isDragging = false;
+        let draggedTab = null;
+        let draggedTabId = null;
+        let justFinishedDrag = false;
 
         function renderTabs(tabs, activeId) {
             // Clear existing tabs (keeping the new tab button which is last)
@@ -606,6 +639,7 @@
             tabs.forEach(tab => {
                 const el = document.createElement('div');
                 el.className = `tab ${tab.id === activeId ? 'active' : ''}`;
+                el.dataset.tabId = tab.id;
 
                 // Favicon logic (placeholder)
                 const favInfo = tab.favicon ? `<img src="${tab.favicon}" class="tab-favicon">` : `<div class="tab-favicon"></div>`;
@@ -618,7 +652,13 @@
 
                 // Click to Switch
                 el.addEventListener('click', (e) => {
-                    if (tab.id !== activeId) {
+                    // Don't switch if we just finished dragging
+                    if (justFinishedDrag) {
+                        justFinishedDrag = false;
+                        return;
+                    }
+
+                    if (tab.id !== activeId && !draggedTab && !isDragging) {
                         invoke('switch_tab', { tabId: tab.id });
                     }
                 });
@@ -630,9 +670,115 @@
                     invoke('close_tab', { tabId: tab.id });
                 });
 
+                // Mouse Drag Handler
+                el.addEventListener('mousedown', handleMouseDown);
+
                 // Insert before new tab button
                 tabBar.insertBefore(el, newTabBtn);
             });
+        }
+
+        // ===== Tab Mouse Drag Handlers =====
+        let dragStartX = 0;
+        let hasDragged = false;
+
+        function handleMouseDown(e) {
+            // Ignore clicks on close button
+            if (e.target.closest('.tab-close')) return;
+
+            // Prevent text selection during drag
+            e.preventDefault();
+
+            draggedTab = e.currentTarget;
+            draggedTabId = e.currentTarget.dataset.tabId;
+            dragStartX = e.clientX;
+            hasDragged = false;
+
+            // Add global listeners
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', handleMouseUp);
+
+            console.log('[Tab Drag] Mouse down on:', draggedTabId);
+        }
+
+        function handleMouseMove(e) {
+            if (!draggedTab) return;
+
+            // Check if we've moved enough to consider this a drag (5px threshold)
+            const distance = Math.abs(e.clientX - dragStartX);
+
+            if (!hasDragged && distance > 5) {
+                // First time dragging - initialize drag state
+                hasDragged = true;
+                isDragging = true;
+                draggedTab.classList.add('dragging');
+
+                // Switch to the dragged tab
+                if (!draggedTab.classList.contains('active')) {
+                    invoke('switch_tab', { tabId: draggedTabId });
+                }
+
+                console.log('[Tab Drag] Drag started');
+            }
+
+            if (!isDragging) return;
+
+            // Find tab under cursor
+            const tabs = Array.from(document.querySelectorAll('.tab'));
+            const targetTab = tabs.find(tab => {
+                if (tab === draggedTab) return false;
+                const rect = tab.getBoundingClientRect();
+                return e.clientX >= rect.left && e.clientX <= rect.right;
+            });
+
+            if (targetTab) {
+                const rect = targetTab.getBoundingClientRect();
+                const midpoint = rect.left + rect.width / 2;
+
+                // Reorder based on midpoint
+                if (e.clientX < midpoint) {
+                    tabBar.insertBefore(draggedTab, targetTab);
+                } else {
+                    tabBar.insertBefore(draggedTab, targetTab.nextSibling);
+                }
+            }
+        }
+
+        function handleMouseUp(e) {
+            // Remove global listeners first
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+
+            if (hasDragged && isDragging) {
+                // Actual drag occurred - send reorder to backend
+                draggedTab.classList.remove('dragging');
+
+                const newOrder = Array.from(document.querySelectorAll('.tab')).map(t => t.dataset.tabId);
+                console.log('[Tab Drag] Sending new order:', newOrder);
+
+                invoke('reorder_tabs', { newOrder }).then(() => {
+                    console.log('[Tab Drag] Backend updated');
+                }).catch(err => {
+                    console.error('[Tab Drag] Backend failed:', err);
+                });
+
+                // Prevent the click handler from firing after a drag
+                justFinishedDrag = true;
+            }
+            // If not dragged, it was just a click - let the click handler deal with it
+
+            // Clean up drag state
+            isDragging = false;
+            draggedTab = null;
+            draggedTabId = null;
+            hasDragged = false;
+
+            // Apply any pending tabs update that was deferred during drag
+            if (pendingTabsUpdate) {
+                console.log('[Tabs] Applying deferred tabs update');
+                renderTabs(pendingTabsUpdate.tabs, pendingTabsUpdate.activeTabId);
+                pendingTabsUpdate = null;
+            }
         }
 
         // Click Outside to Close
@@ -864,6 +1010,12 @@
         // ===== Listen for Native Focus Event =====
         // ===== Listen for Native Focus Event =====
         listen('focus-url-bar', async () => {
+            // Skip focus during drag operations
+            if (isDragging) {
+                console.log('[Focus] Skipping URL focus during drag');
+                return;
+            }
+
             await getCurrentWebview().setFocus();
             requestAnimationFrame(() => {
                 inputState = STATE.EDITING; // Force editing mode

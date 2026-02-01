@@ -20,6 +20,7 @@ use sovereign_browser_lib::modules::navigation::guess_request_type;
 use sovereign_browser_lib::modules::devtools::DevToolsManager;
 use sovereign_browser_lib::modules::closed_tabs;
 use sovereign_browser_lib::modules::closed_tabs_store;
+use sovereign_browser_lib::modules::tabs;
 
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1630,6 +1631,7 @@ fn main() {
             close_tab,
             get_tabs,
             restore_closed_tab,
+            tabs::reorder_tabs,
             navigate, 
             go_back, 
             go_forward,
