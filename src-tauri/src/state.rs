@@ -1,8 +1,9 @@
 // Shared state structs to avoid circular dependencies.
 // These are used by main.rs and can be tested independently.
 
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 use serde::{Deserialize, Serialize};
 
 use crate::history::HistoryStore;
@@ -26,6 +27,27 @@ pub struct Tab {
     pub screenshot: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClosedTab {
+    pub id: String,           // Original tab ID (for reference)
+    pub title: String,        // Page title
+    pub url: String,          // Current URL when closed
+    pub favicon: Option<String>,  // Favicon data URL
+    pub closed_at: SystemTime,    // When tab was closed (for sorting/expiry)
+}
+
+impl From<&Tab> for ClosedTab {
+    fn from(tab: &Tab) -> Self {
+        ClosedTab {
+            id: tab.id.clone(),
+            title: tab.title.clone(),
+            url: tab.url.clone(),
+            favicon: tab.favicon.clone(),
+            closed_at: SystemTime::now(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct DropdownPayload {
@@ -45,4 +67,5 @@ pub struct AppState {
     pub pending_launch_url: Arc<Mutex<Option<String>>>,
     pub adblock: Arc<AdBlockManager>,
     pub devtools: Arc<DevToolsManager>,
+    pub closed_tabs: Arc<Mutex<VecDeque<ClosedTab>>>,  // LIFO queue, max 25 tabs
 }

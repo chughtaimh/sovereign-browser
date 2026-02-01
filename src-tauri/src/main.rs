@@ -18,6 +18,8 @@ use sovereign_browser_lib::modules::navigation::smart_parse_url;
 #[cfg(not(target_os = "macos"))]
 use sovereign_browser_lib::modules::navigation::guess_request_type;
 use sovereign_browser_lib::modules::devtools::DevToolsManager;
+use sovereign_browser_lib::modules::closed_tabs;
+use sovereign_browser_lib::modules::closed_tabs_store;
 
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -711,6 +713,9 @@ async fn close_tab_logic(app: &AppHandle, state: &AppState, tab_id: String) -> R
     {
         let mut tabs = state.tabs.lock().unwrap();
         if let Some(index) = tabs.iter().position(|t| t.id == tab_id) {
+             // Archive tab BEFORE removing it
+             closed_tabs::archive_tab(state, &tabs[index]);
+
              let tab = tabs.remove(index);
              label_to_close = tab.webview_label;
              
@@ -757,6 +762,20 @@ async fn close_tab_logic(app: &AppHandle, state: &AppState, tab_id: String) -> R
 fn get_tabs(state: tauri::State<AppState>) -> Vec<Tab> {
     let tabs = state.tabs.lock().unwrap();
     tabs.clone()
+}
+
+#[tauri::command]
+fn restore_closed_tab(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    // Get last closed tab
+    let closed_tab = closed_tabs::pop_closed_tab(&state)
+        .ok_or("No closed tabs to restore")?;
+
+    // Simply create a new tab at the stored URL
+    // This reuses ALL existing tab creation logic
+    create_tab_with_url(&app, &state, closed_tab.url)
 }
 
 fn emit_tabs_update(app: &AppHandle, state: &AppState) {
@@ -856,12 +875,17 @@ fn navigate(app: AppHandle, state: tauri::State<AppState>, url: String) {
     // Record intent to visit (typed)
     state.history.add_visit(final_url.clone(), None, true);
 
-    // Find Active Tab's Webview
+    // Find Active Tab's Webview and update its URL
     let active_label = {
         let active = state.active_tab_id.lock().unwrap();
-        let tabs = state.tabs.lock().unwrap();
+        let mut tabs = state.tabs.lock().unwrap();
         active.as_ref().and_then(|id| {
-            tabs.iter().find(|t| &t.id == id).map(|t| t.webview_label.clone())
+            if let Some(tab) = tabs.iter_mut().find(|t| &t.id == id) {
+                tab.url = final_url.clone();
+                Some(tab.webview_label.clone())
+            } else {
+                None
+            }
         })
     };
 
@@ -877,6 +901,16 @@ fn navigate(app: AppHandle, state: tauri::State<AppState>, url: String) {
 fn spa_navigate(app: AppHandle, state: tauri::State<AppState>, url: String) {
     // SPA navigation event from frontend hook
     state.history.add_visit(url.clone(), None, false);
+
+    // Update active tab's URL
+    let active_id = state.active_tab_id.lock().unwrap().clone();
+    if let Some(id) = active_id {
+        let mut tabs = state.tabs.lock().unwrap();
+        if let Some(tab) = tabs.iter_mut().find(|t| t.id == id) {
+            tab.url = url.clone();
+        }
+    }
+
     // Emit for URL bar sync - Global App Event
     let _ = app.emit("url-changed", url);
 }
@@ -1125,8 +1159,12 @@ fn main() {
             // Initialize DevTools Manager
             let devtools_manager = Arc::new(DevToolsManager::new(9222));
             devtools_manager.clone().start();
-            
-            app.manage(AppState { 
+
+            // Load closed tabs from disk
+            let closed_tabs_store = closed_tabs_store::ClosedTabsStore::load(app.handle());
+            let closed_tabs = Arc::new(Mutex::new(closed_tabs_store.tabs));
+
+            app.manage(AppState {
                 history: history_store,
                 settings: settings,
                 dropdown_ready: Arc::new(Mutex::new(false)),
@@ -1137,6 +1175,7 @@ fn main() {
                 pending_launch_url: Arc::new(Mutex::new(None)),
                 adblock: adblock_manager.clone(),
                 devtools: devtools_manager,
+                closed_tabs: closed_tabs,
             });
             
             // macOS: Apply cached Safari rules to existing webviews after a delay
@@ -1246,6 +1285,8 @@ fn main() {
             let history_menu = SubmenuBuilder::new(app, "History")
                 .item(&MenuItemBuilder::with_id("go_back", "Back").accelerator("CmdOrCtrl+[").build(app)?)
                 .item(&MenuItemBuilder::with_id("go_forward", "Forward").accelerator("CmdOrCtrl+]").build(app)?)
+                .separator()
+                .item(&MenuItemBuilder::with_id("reopen_closed_tab", "Reopen Closed Tab").accelerator("CmdOrCtrl+Shift+T").build(app)?)
                 .build()?;
 
             let feedback_menu = SubmenuBuilder::new(app, "Feedback")
@@ -1433,7 +1474,15 @@ fn main() {
                              }
                         }
                     },
-                    
+                    "reopen_closed_tab" => {
+                        if let Some(state) = handle_for_menu.try_state::<AppState>() {
+                            match restore_closed_tab(handle_for_menu.clone(), state) {
+                                Ok(tab_id) => println!("[Menu] Restored tab: {}", tab_id),
+                                Err(e) => eprintln!("[Menu] Failed to restore tab: {}", e),
+                            }
+                        }
+                    },
+
                     "print" => {
                         if let Some(state) = handle_for_menu.try_state::<AppState>() {
                              let label = {
@@ -1537,6 +1586,16 @@ fn main() {
                              let _ = dd.hide();
                          }
                     }
+                    tauri::WindowEvent::CloseRequested { .. } => {
+                        // Save closed tabs to disk before closing
+                        if let Some(state) = handle_clone.try_state::<AppState>() {
+                            let closed = state.closed_tabs.lock().unwrap();
+                            let store = closed_tabs_store::ClosedTabsStore {
+                                tabs: closed.clone(),
+                            };
+                            let _ = store.save(&handle_clone);
+                        }
+                    }
                     _ => {}
                 }
             });
@@ -1548,6 +1607,7 @@ fn main() {
             switch_tab,
             close_tab,
             get_tabs,
+            restore_closed_tab,
             navigate, 
             go_back, 
             go_forward,
