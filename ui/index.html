@@ -144,7 +144,6 @@
             background: linear-gradient(to bottom, #3a3a3a, #2d2d2d);
             gap: 8px;
             border-bottom: 1px solid #1a1a1a;
-            -webkit-app-region: drag;
             position: relative;
             z-index: 100;
         }
@@ -153,7 +152,6 @@
         #input-container {
             flex-grow: 1;
             position: relative;
-            -webkit-app-region: no-drag;
             height: 32px;
         }
 
@@ -287,7 +285,6 @@
         }
 
         button {
-            -webkit-app-region: no-drag;
             background: #4a4a4a;
             border: 1px solid #5a5a5a;
             color: #e0e0e0;
@@ -331,7 +328,6 @@
             padding-top: 4px;
             /* Space above tabs */
             gap: 4px;
-            -webkit-app-region: drag;
             /* THE RUNWAY: Entire strip is draggable */
             overflow-x: auto;
             scrollbar-width: none;
@@ -357,7 +353,6 @@
             color: #ccc;
             font-size: 12px;
             cursor: pointer;
-            -webkit-app-region: no-drag;
             /* HOLES: Tabs absorb clicks */
             transition: background 0.1s;
             position: relative;
@@ -441,7 +436,6 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            -webkit-app-region: no-drag;
             margin-bottom: 2px;
         }
 
@@ -478,6 +472,22 @@
         const { invoke } = window.__TAURI__.core;
         const { listen } = window.__TAURI__.event;
         const { getCurrentWebview } = window.__TAURI__.webview;
+        const { getCurrentWindow } = window.__TAURI__.window;
+
+        document.addEventListener('mousedown', (e) => {
+            // 1. Only allow main mouse button (Left Click)
+            if (e.button !== 0) return;
+
+            // 2. Allow List: Only drag if the clicked element's ID matches exactly.
+            //    This implicitly ignores all buttons, inputs, and tabs.
+            //    NOTE: If you have other container divs acting as spacers, add their IDs here.
+            const dragTargets = ['toolbar', 'tab-bar', 'input-container'];
+
+            if (dragTargets.includes(e.target.id)) {
+                e.preventDefault(); // Stop text cursor flickering
+                getCurrentWindow().startDragging();
+            }
+        });
 
         const urlInput = document.getElementById('url-input');
         const inputContainer = document.getElementById('input-container');
