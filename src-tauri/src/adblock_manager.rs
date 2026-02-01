@@ -15,6 +15,20 @@ const ENGINE_CACHE_FILE: &str = "adblock_engine.bin";
 const SAFARI_CACHE_FILE: &str = "safari_rules.json";
 const ALLOWLIST_FILE: &str = "adblock_allowlist.json";
 
+// Custom exception rules for webmail services (Option A: Granular Approach)
+// Syntax: @@||domain^$domain=context - "When on context domain, allow requests to domain"
+// This maintains privacy by only whitelisting Google infrastructure, not all third-party trackers
+const CUSTOM_EXCEPTION_RULES: &[&str] = &[
+    // Gmail: Whitelist Google's infrastructure domains when on Gmail
+    "@@||google.com^$domain=mail.google.com|gmail.com",
+    "@@||gstatic.com^$domain=mail.google.com|gmail.com",
+    "@@||googleusercontent.com^$domain=mail.google.com|gmail.com",
+    "@@||googleapis.com^$domain=mail.google.com|gmail.com",
+    "@@||ggpht.com^$domain=mail.google.com|gmail.com",
+    // Future: Add Outlook, Yahoo Mail, etc.
+    // "@@||outlook.live.com^$domain=outlook.live.com",
+];
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum RuleExpiry {
     Forever,
@@ -119,6 +133,13 @@ impl AdBlockManager {
             return;
         }
 
+        // CRITICAL: Inject custom exception rules for webmail
+        println!("[AdBlock] Background: Injecting {} custom exception rules", CUSTOM_EXCEPTION_RULES.len());
+        filter_set.add_filters(CUSTOM_EXCEPTION_RULES, ParseOptions::default());
+        for rule in CUSTOM_EXCEPTION_RULES {
+            println!("[AdBlock] Background: Added custom rule: {}", rule);
+        }
+
         println!("[AdBlock] Background: Loaded {} total filter lines", lines_count);
 
         // Pipeline A: Rust Engine (Cosmetic & Windows/Linux network blocking)
@@ -134,12 +155,56 @@ impl AdBlockManager {
         {
             println!("[AdBlock] Background: Generating Safari content blocking rules...");
             if let Ok((rules, skipped)) = filter_set.into_content_blocking() {
-                println!("[AdBlock] Background: Generated {} Safari rules, skipped {} filters", rules.len(), skipped.len());
-                if let Ok(json) = serde_json::to_string(&rules) {
-                    println!("[AdBlock] Background: Safari rules serialized ({} chars)", json.len());
-                    let _ = fs::write(self.app_dir.join(SAFARI_CACHE_FILE), &json);
-                    self.safari_rules_json.store(Arc::new(json));
-                    println!("[AdBlock] Background: Safari rules updated and cached.");
+                println!("[AdBlock] Background: Generated {} Safari rules ({} skipped)", rules.len(), skipped.len());
+
+                // CRITICAL: The adblock crate's $domain syntax doesn't convert to Safari rules properly
+                // Manually inject exception rules for Gmail using Safari's format
+                // Work with JSON to add custom rules
+
+                if let Ok(json_str) = serde_json::to_string(&rules) {
+                    if let Ok(mut rules_json) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
+                        // Add exception rules for Gmail
+                        let gmail_domains = vec!["*mail.google.com", "*gmail.com"];
+                        let whitelisted_domains = vec![
+                            "google.com", "gstatic.com", "googleusercontent.com",
+                            "googleapis.com", "ggpht.com"
+                        ];
+
+                        for whitelisted in &whitelisted_domains {
+                            // CRITICAL: URL filter must match domain specifically, not just contain the string
+                            // Pattern: ^https?://([^/]*\.)?DOMAIN/
+                            // This matches: https://domain/ or https://subdomain.domain/ but NOT https://evil.com?url=domain
+                            let url_pattern = if whitelisted.contains('.') {
+                                // For domains like google.com, match as domain with optional subdomain
+                                let escaped = whitelisted.replace(".", "\\.");
+                                format!("^https?://([^/]*\\.)?{}(/|$)", escaped)
+                            } else {
+                                // For single-word domains, match exactly
+                                format!("^https?://{}(/|$)", whitelisted)
+                            };
+
+                            let exception_rule = serde_json::json!({
+                                "trigger": {
+                                    "url-filter": url_pattern,
+                                    "if-domain": gmail_domains.clone()
+                                },
+                                "action": {
+                                    "type": "allow"
+                                }
+                            });
+                            rules_json.push(exception_rule);
+                            println!("[AdBlock] Background: Added Safari exception for {} on Gmail", whitelisted);
+                        }
+
+                        println!("[AdBlock] Background: Final Safari rules count: {}", rules_json.len());
+
+                        if let Ok(final_json) = serde_json::to_string(&rules_json) {
+                            println!("[AdBlock] Background: Safari rules serialized ({} chars)", final_json.len());
+                            let _ = fs::write(self.app_dir.join(SAFARI_CACHE_FILE), &final_json);
+                            self.safari_rules_json.store(Arc::new(final_json));
+                            println!("[AdBlock] Background: Safari rules updated and cached.");
+                        }
+                    }
                 }
             } else {
                 println!("[AdBlock] Background: Failed to generate Safari rules");
@@ -172,10 +237,10 @@ impl AdBlockManager {
             }
         }
 
-        // Check Engine (Lock-Free)
+        // Check Engine (Lock-Free) - engine handles exception rules automatically
         let engine = self.engine.load();
         let req = adblock::request::Request::new(url, source_url, request_type).ok();
-        
+
         if let Some(r) = req {
             engine.check_network_request(&r).matched
         } else {
@@ -188,14 +253,15 @@ impl AdBlockManager {
     /// Get cosmetic hiding CSS for a URL.
     /// CRITICAL: Respects allowlist - returns empty string if site is excepted.
     pub fn get_cosmetic_css(&self, url: &str) -> String {
-        // CRITICAL FIX: Respect allowlist for cosmetic rules too
-        if self.is_exception(url) {
+        // CRITICAL: Respect allowlist AND webmail domains
+        // Use url crate for security (no phishing vulnerabilities)
+        if self.is_exception(url) || Self::is_webmail_domain(url) {
             return String::new();
         }
 
         let engine = self.engine.load();
         let resources = engine.url_cosmetic_resources(url);
-        
+
         let mut css = String::with_capacity(resources.hide_selectors.len() * 50);
         for selector in resources.hide_selectors {
             css.push_str(selector.as_str());
@@ -250,6 +316,23 @@ impl AdBlockManager {
 
     fn extract_domain(url: &str) -> Option<String> {
         url::Url::parse(url).ok()?.domain().map(|d| d.to_string())
+    }
+
+    /// Check if URL is a webmail domain that should skip cosmetic filtering.
+    /// Uses url crate for correct, secure domain parsing (security > micro-optimization).
+    fn is_webmail_domain(url: &str) -> bool {
+        // Use url crate - correctness over micro-optimization
+        if let Ok(parsed) = url::Url::parse(url) {
+            if let Some(domain) = parsed.domain() {
+                // Check against webmail domains from exception rules
+                return domain == "mail.google.com"
+                    || domain.ends_with(".mail.google.com")
+                    || domain == "gmail.com"
+                    || domain.ends_with(".gmail.com");
+                // Future: Add more as CUSTOM_EXCEPTION_RULES grows
+            }
+        }
+        false
     }
 
     /// Get the cached Safari rules JSON for WKContentRuleList.

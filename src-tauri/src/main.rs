@@ -446,6 +446,28 @@ fn create_tab_with_url(app: &AppHandle, state: &AppState, url_str: String) -> Re
     // This script runs at document_start. Uses safer generic hiding.
     const COSMETIC_FILTER_SCRIPT: &str = r#"
         (function() {
+            // Webmail domains to skip generic cosmetic filtering
+            const WEBMAIL_DOMAINS = ['mail.google.com', 'gmail.com'];
+
+            // Skip generic hiding on webmail
+            const hostname = window.location.hostname;
+            const isWebmail = WEBMAIL_DOMAINS.some(domain =>
+                hostname === domain || hostname.endsWith('.' + domain)
+            );
+
+            if (isWebmail) {
+                console.log('[AdBlock] Generic cosmetic filters disabled for webmail');
+
+                // Still listen for site-specific rules (backend will return empty for webmail)
+                if (window.__TAURI__) {
+                    window.__TAURI__.core.invoke('get_cosmetic_rules', { url: window.location.href });
+                    window.__TAURI__.event.listen('apply-cosmetic-css', (event) => {
+                        // No-op for webmail
+                    });
+                }
+                return;
+            }
+
             // Safer Generic Hiding: Targets high-confidence ad containers only
             const style = document.createElement('style');
             style.id = 'sovereign-generic-hiding';
@@ -459,7 +481,7 @@ fn create_tab_with_url(app: &AppHandle, state: &AppState, url_str: String) -> Re
             // Async: Request specific rules
             if (window.__TAURI__) {
                 window.__TAURI__.core.invoke('get_cosmetic_rules', { url: window.location.href });
-                
+
                 window.__TAURI__.event.listen('apply-cosmetic-css', (event) => {
                     const css = event.payload.css;
                     if (!css) return;
