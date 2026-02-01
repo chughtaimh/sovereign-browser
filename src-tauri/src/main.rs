@@ -1130,6 +1130,20 @@ fn focus_content(app: AppHandle, state: tauri::State<AppState>) -> Result<(), St
     Ok(())
 }
 
+#[tauri::command]
+fn toggle_window_maximize(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_window("main") {
+        let is_maximized = window.is_maximized().map_err(|e| e.to_string())?;
+
+        if is_maximized {
+            window.unmaximize().map_err(|e| e.to_string())?;
+        } else {
+            window.maximize().map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -1632,6 +1646,7 @@ fn main() {
             get_tabs,
             restore_closed_tab,
             tabs::reorder_tabs,
+            toggle_window_maximize,
             navigate, 
             go_back, 
             go_forward,

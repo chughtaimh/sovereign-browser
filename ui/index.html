@@ -608,6 +608,25 @@
             invoke('create_tab', { url: "https://duckduckgo.com" });
         });
 
+        // ===== Native macOS Double-Click to Maximize =====
+        // Double-click on empty toolbar space to toggle maximize (native macOS behavior)
+        const toggleMaximize = async (e) => {
+            // Only trigger on empty space (not on tabs, buttons, or interactive elements)
+            if (e.target.closest('.tab') || e.target.closest('button') || e.target.closest('input')) {
+                return;
+            }
+
+            try {
+                await invoke('toggle_window_maximize');
+            } catch (err) {
+                console.error('[Window] Failed to toggle maximize:', err);
+            }
+        };
+
+        // Add to both tab bar and toolbar for complete coverage
+        tabBar.addEventListener('dblclick', toggleMaximize);
+        document.getElementById('toolbar').addEventListener('dblclick', toggleMaximize);
+
         // Track pending tabs update during drag
         let pendingTabsUpdate = null;
 
