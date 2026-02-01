@@ -39,7 +39,7 @@ A minimalist, privacy-focused web browser built with [Tauri v2](https://v2.tauri
 
 3. **Build for production**
    ```bash
-   cargo tauri build
+   cargo tauri build --debug
    ```
 
 ## Technology Stack
