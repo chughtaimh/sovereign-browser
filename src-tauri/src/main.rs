@@ -1144,6 +1144,245 @@ fn toggle_window_maximize(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Serialize, Deserialize)]
+struct FindResult {
+    current_match: usize,
+    total_matches: usize,
+    found: bool,
+}
+
+#[tauri::command]
+async fn find_in_webview(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    query: String,
+    forward: bool,
+) -> Result<FindResult, String> {
+    let active_id = state.active_tab_id.lock().unwrap().clone();
+    let webview_label = {
+        let tabs = state.tabs.lock().unwrap();
+        tabs.iter()
+            .find(|t| Some(&t.id) == active_id.as_ref())
+            .map(|t| t.webview_label.clone())
+    };
+
+    if let Some(label) = webview_label {
+        if let Some(webview) = app.get_webview(&label) {
+            let find_script = format!(
+                r#"
+                (function() {{
+                    const query = {};
+                    const forward = {};
+
+                    // Initialize search state
+                    if (!window.__sovFind) {{
+                        window.__sovFind = {{ query: '', matches: [], currentIndex: -1 }};
+                    }}
+
+                    // New search or different query
+                    if (window.__sovFind.query !== query) {{
+                        // Clear old highlights
+                        document.querySelectorAll('.sov-find-highlight').forEach(el => {{
+                            const parent = el.parentNode;
+                            parent.replaceChild(document.createTextNode(el.textContent), el);
+                            parent.normalize();
+                        }});
+
+                        window.__sovFind.query = query;
+                        window.__sovFind.matches = [];
+                        window.__sovFind.currentIndex = -1;
+
+                        if (query) {{
+                            // FIRST PASS: Collect all match positions WITHOUT modifying DOM
+                            const matchPositions = [];
+                            const walker = document.createTreeWalker(
+                                document.body,
+                                NodeFilter.SHOW_TEXT,
+                                null
+                            );
+
+                            let node;
+                            while (node = walker.nextNode()) {{
+                                const parent = node.parentElement;
+                                if (parent && (parent.tagName === 'SCRIPT' || parent.tagName === 'STYLE')) {{
+                                    continue;
+                                }}
+
+                                const text = node.textContent;
+                                const lowerText = text.toLowerCase();
+                                const lowerQuery = query.toLowerCase();
+                                let index = 0;
+
+                                while ((index = lowerText.indexOf(lowerQuery, index)) !== -1) {{
+                                    matchPositions.push({{
+                                        node: node,
+                                        start: index,
+                                        end: index + query.length
+                                    }});
+                                    index += query.length;
+                                }}
+                            }}
+
+                            // SECOND PASS: Apply highlights in REVERSE order to preserve offsets
+                            for (let i = matchPositions.length - 1; i >= 0; i--) {{
+                                const match = matchPositions[i];
+                                try {{
+                                    const range = document.createRange();
+                                    range.setStart(match.node, match.start);
+                                    range.setEnd(match.node, match.end);
+
+                                    const mark = document.createElement('mark');
+                                    mark.className = 'sov-find-highlight';
+                                    mark.style.backgroundColor = '#ffeb3b';  // Yellow
+                                    mark.style.color = 'black';
+
+                                    range.surroundContents(mark);
+                                    window.__sovFind.matches.unshift(mark);  // prepend to maintain order
+                                }} catch (e) {{
+                                    // Skip if range.surroundContents fails (partial element selection)
+                                    console.warn('Could not highlight match:', e);
+                                }}
+                            }}
+
+                            if (window.__sovFind.matches.length > 0) {{
+                                window.__sovFind.currentIndex = 0;
+                            }}
+                        }}
+                    }} else if (window.__sovFind.matches.length > 0) {{
+                        // Navigate existing matches with wrap-around
+                        if (forward) {{
+                            window.__sovFind.currentIndex++;
+                            if (window.__sovFind.currentIndex >= window.__sovFind.matches.length) {{
+                                window.__sovFind.currentIndex = 0;
+                            }}
+                        }} else {{
+                            window.__sovFind.currentIndex--;
+                            if (window.__sovFind.currentIndex < 0) {{
+                                window.__sovFind.currentIndex = window.__sovFind.matches.length - 1;
+                            }}
+                        }}
+                    }}
+
+                    // Highlight current match in orange, others in yellow
+                    if (window.__sovFind.matches.length > 0) {{
+                        window.__sovFind.matches.forEach((mark, idx) => {{
+                            if (idx === window.__sovFind.currentIndex) {{
+                                mark.style.backgroundColor = '#ff9800';  // Orange for current
+                                mark.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                            }} else {{
+                                mark.style.backgroundColor = '#ffeb3b';  // Yellow for others
+                            }}
+                        }});
+
+                    }}
+
+                    // Report match count to Rust via invoke
+                    if (window.__TAURI__ && window.__TAURI__.core) {{
+                        console.log('[WEBVIEW] Calling report_find_result via invoke');
+                        window.__TAURI__.core.invoke('report_find_result', {{
+                            found: window.__sovFind.matches.length > 0,
+                            currentMatch: window.__sovFind.currentIndex + 1,
+                            totalMatches: window.__sovFind.matches.length
+                        }}).catch(err => {{
+                            console.error('[WEBVIEW] Failed to invoke report_find_result:', err);
+                        }});
+                    }} else {{
+                        console.error('[WEBVIEW] window.__TAURI__ not available!');
+                    }}
+                }})()
+                "#,
+                serde_json::to_string(&query).unwrap(),
+                forward
+            );
+
+            webview.eval(&find_script).map_err(|e| e.to_string())?;
+
+            Ok(FindResult {
+                found: true,
+                current_match: 1,
+                total_matches: 1,
+            })
+        } else {
+            Err("Webview not found".to_string())
+        }
+    } else {
+        Err("No active tab".to_string())
+    }
+}
+
+#[tauri::command]
+async fn clear_find_highlights(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let active_id = state.active_tab_id.lock().unwrap().clone();
+    let webview_label = {
+        let tabs = state.tabs.lock().unwrap();
+        tabs.iter()
+            .find(|t| Some(&t.id) == active_id.as_ref())
+            .map(|t| t.webview_label.clone())
+    };
+
+    if let Some(label) = webview_label {
+        if let Some(webview) = app.get_webview(&label) {
+            webview.eval(
+                r#"
+                (function() {
+                    // Clear custom highlights
+                    document.querySelectorAll('.sov-find-highlight').forEach(el => {
+                        const parent = el.parentNode;
+                        parent.replaceChild(document.createTextNode(el.textContent), el);
+                        parent.normalize();
+                    });
+
+                    // Reset state
+                    if (window.__sovFind) {
+                        window.__sovFind = { query: '', matches: [], currentIndex: -1 };
+                    }
+                })()
+                "#
+            ).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn report_find_result(
+    app: AppHandle,
+    found: bool,
+    current_match: usize,
+    total_matches: usize,
+) -> Result<(), String> {
+    println!("[RUST] report_find_result called: found={}, current={}, total={}",
+             found, current_match, total_matches);
+
+    // Emit as GLOBAL event (broadcast to all windows) instead of targeted
+    let payload = serde_json::json!({
+        "found": found,
+        "currentMatch": current_match,
+        "totalMatches": total_matches
+    });
+
+    app.emit("find-result", &payload)
+        .map_err(|e| {
+            println!("[RUST] Failed to emit globally: {}", e);
+            e.to_string()
+        })?;
+
+    println!("[RUST] Successfully emitted find-result globally to all windows");
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn hide_find_window(app: AppHandle) -> Result<(), String> {
+    if let Some(find_win) = app.get_window("find") {
+        find_win.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -1305,6 +1544,8 @@ fn main() {
                 .item(&PredefinedMenuItem::copy(app, Some("Copy"))?)
                 .item(&PredefinedMenuItem::paste(app, Some("Paste"))?)
                 .item(&PredefinedMenuItem::select_all(app, Some("Select All"))?)
+                .separator()
+                .item(&MenuItemBuilder::with_id("find_in_page", "Find in Page").accelerator("CmdOrCtrl+F").build(app)?)
                 .build()?;
 
             let view_menu = SubmenuBuilder::new(app, "View")
@@ -1369,6 +1610,63 @@ fn main() {
                 },
                 Err(e) => {
                     println!("[dropdown] ERROR: Failed to create dropdown window: {:?}", e);
+                }
+            }
+
+            // --- Create Find Window (Hidden) ---
+            let find_window = tauri::WebviewWindowBuilder::new(
+                app,
+                "find",
+                tauri::WebviewUrl::App("find.html".into())
+            )
+            .title("Find")
+            .inner_size(400.0, 50.0)
+            .decorations(false)
+            .visible(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .focused(false)
+            .resizable(false)
+            .build();
+
+            match find_window {
+                Ok(find_win) => {
+                    println!("[find] Find window created successfully: {:?}", find_win.label());
+
+                    // Set up window following behavior
+                    let find_win_clone = find_win.clone();
+                    let main_win = app.get_window("main");
+
+                    if let Some(main_window) = main_win {
+                        let find_window_for_event = find_win_clone.clone();
+
+                        main_window.on_window_event(move |event| {
+                            if let tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) = event {
+                                // Reposition find window when main window moves or resizes
+                                if let Some(main_ref) = find_window_for_event.app_handle().get_window("main") {
+                                    if let Ok(main_size) = main_ref.inner_size() {
+                                        if let Ok(main_pos) = main_ref.inner_position() {
+                                            if let Ok(scale) = main_ref.scale_factor() {
+                                                let find_width_physical = (400.0 * scale) as i32;
+                                                let find_height_physical = (50.0 * scale) as i32;
+                                                let margin_physical = (20.0 * scale) as i32;
+
+                                                let x = main_pos.x + (main_size.width as i32) - find_width_physical - margin_physical;
+                                                let y = main_pos.y + (main_size.height as i32) - find_height_physical - margin_physical;
+
+                                                let _ = find_window_for_event.set_position(tauri::Position::Physical(
+                                                    tauri::PhysicalPosition::new(x, y)
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    }
+                },
+                Err(e) => {
+                    println!("[find] ERROR: Failed to create find window: {:?}", e);
                 }
             }
 
@@ -1450,7 +1748,32 @@ fn main() {
                              let _ = main_win.emit("focus-url-bar", ());
                         }
                     },
-                    
+                    "find_in_page" => {
+                        if let Some(find_win) = handle_for_menu.get_window("find") {
+                            if let Some(main_win) = handle_for_menu.get_window("main") {
+                                // Position find window at bottom-right of main window
+                                if let Ok(main_size) = main_win.inner_size() {
+                                    if let Ok(main_pos) = main_win.inner_position() {
+                                        if let Ok(scale) = main_win.scale_factor() {
+                                            // Calculate position in physical pixels
+                                            let find_width_physical = (400.0 * scale) as i32;
+                                            let find_height_physical = (50.0 * scale) as i32;
+                                            let margin_physical = (20.0 * scale) as i32;
+
+                                            // Position at bottom-right in physical coordinates
+                                            let x = main_pos.x + (main_size.width as i32) - find_width_physical - margin_physical;
+                                            let y = main_pos.y + (main_size.height as i32) - find_height_physical - margin_physical;
+
+                                            let _ = find_win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(x, y)));
+                                        }
+                                    }
+                                }
+                                let _ = find_win.show();
+                                let _ = find_win.set_focus();
+                            }
+                        }
+                    },
+
                     // Navigation Actions (Delegated to Active Tab)
                     "reload" => {
                          if let Some(state) = handle_for_menu.try_state::<AppState>() {
@@ -1675,7 +1998,12 @@ fn main() {
             get_cosmetic_rules,
             set_site_exception,
             get_exceptions,
-            open_devtools
+            open_devtools,
+            // Find in Page Commands
+            find_in_webview,
+            clear_find_highlights,
+            report_find_result,
+            hide_find_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

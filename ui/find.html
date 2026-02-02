@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        :root {
+            --bg-color: #2d2d2d;
+            --input-bg: #1e1e1e;
+            --input-border: #4a4a4a;
+            --text-color: #e0e0e0;
+            --accent-color: #0a84ff;
+            --accent-glow: rgba(10, 132, 255, 0.3);
+        }
+
+        body.light-theme {
+            --bg-color: #f0f0f0;
+            --input-bg: #ffffff;
+            --input-border: #c0c0c0;
+            --text-color: #000000;
+        }
+
+        body {
+            margin: 0;
+            padding: 10px 12px;
+            background: var(--bg-color);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #find-input {
+            flex: 1;
+            height: 28px;
+            padding: 0 10px;
+            border-radius: 5px;
+            border: 1px solid var(--input-border);
+            background: var(--input-bg);
+            color: var(--text-color);
+            font-size: 12px;
+            outline: none;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        #find-input:focus {
+            border-color: var(--accent-color);
+            box-shadow: 0 0 0 2px var(--accent-glow);
+        }
+
+        #find-match-count {
+            font-size: 11px;
+            color: #999;
+            min-width: 50px;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        .find-button {
+            width: 26px;
+            height: 26px;
+            background: transparent;
+            border: none;
+            color: var(--text-color);
+            cursor: pointer;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            transition: background 0.15s ease;
+        }
+
+        .find-button svg {
+            width: 12px;
+            height: 12px;
+            pointer-events: none;
+        }
+
+        .find-button:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .find-button:active {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .find-button:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        body.light-theme .find-button:hover {
+            background: rgba(0, 0, 0, 0.05);
+        }
+
+        body.light-theme .find-button:active {
+            background: rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body>
+    <input type="text" id="find-input" placeholder="Find in page..." autocomplete="off" autofocus />
+    <span id="find-match-count"></span>
+    <button class="find-button" id="find-prev" title="Previous (Shift+Enter)">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="9,8 6,3 3,8"/>
+        </svg>
+    </button>
+    <button class="find-button" id="find-next" title="Next (Enter)">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3,4 6,9 9,4"/>
+        </svg>
+    </button>
+    <button class="find-button" id="find-close" title="Close (Esc)">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+            <path d="M1 1L9 9M9 1L1 9"/>
+        </svg>
+    </button>
+
+    <script>
+        console.log('[FIND] ========== SCRIPT LOADED - VERSION 2.0 ==========');
+        const { invoke } = window.__TAURI__.core;
+        const { listen } = window.__TAURI__.event;
+        const { getCurrentWindow } = window.__TAURI__.window;
+
+        const findInput = document.getElementById('find-input');
+        const findMatchCount = document.getElementById('find-match-count');
+        const findPrevBtn = document.getElementById('find-prev');
+        const findNextBtn = document.getElementById('find-next');
+        const findCloseBtn = document.getElementById('find-close');
+
+        let currentFindQuery = '';
+        let findDebounceTimer = null;
+
+        // Perform find operation
+        async function performFind(query, forward = true) {
+            console.log('[FIND] performFind called with query:', query, 'forward:', forward);
+            if (!query) {
+                clearFind();
+                return;
+            }
+
+            currentFindQuery = query;
+
+            try {
+                console.log('[FIND] Invoking find_in_webview...');
+                await invoke('find_in_webview', { query, forward });
+                console.log('[FIND] find_in_webview completed successfully');
+                // Just show search is active
+                findMatchCount.textContent = '';
+                findMatchCount.style.color = '#999';
+                findPrevBtn.disabled = false;
+                findNextBtn.disabled = false;
+            } catch (err) {
+                console.error('[FIND] Find error:', err);
+                findMatchCount.textContent = '✗';
+                findMatchCount.style.color = '#ff6b6b';
+                findPrevBtn.disabled = true;
+                findNextBtn.disabled = true;
+            }
+        }
+
+        function clearFind() {
+            currentFindQuery = '';
+            findMatchCount.textContent = '';
+            findMatchCount.style.color = '#999';
+            invoke('clear_find_highlights').catch(console.error);
+        }
+
+        async function closeFindWindow() {
+            console.log('[FIND] Closing find window...');
+            try {
+                clearFind();
+                // Use Tauri command to hide find window from Rust side
+                await invoke('hide_find_window');
+                console.log('[FIND] Window hide requested');
+            } catch (e) {
+                console.error('[FIND] Error closing window:', e);
+            }
+        }
+
+        // Global keydown listener for ESC
+        document.addEventListener('keydown', async (e) => {
+            console.log('[FIND] Document keydown:', e.key);
+            if (e.key === 'Escape') {
+                console.log('[FIND] ESC detected, closing...');
+                e.preventDefault();
+                e.stopPropagation();
+                await closeFindWindow();
+            }
+        });
+
+        // Event Handlers
+        findInput.addEventListener('input', (e) => {
+            clearTimeout(findDebounceTimer);
+            const query = e.target.value;
+
+            if (query) {
+                findMatchCount.textContent = 'Searching...';
+                findDebounceTimer = setTimeout(() => performFind(query, true), 300);
+            } else {
+                clearFind();
+            }
+        });
+
+        findInput.addEventListener('keydown', async (e) => {
+            console.log('[FIND] Input keydown:', e.key);
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (currentFindQuery) {
+                    performFind(currentFindQuery, !e.shiftKey);
+                }
+            }
+        });
+
+        findNextBtn.addEventListener('click', () => {
+            if (currentFindQuery) {
+                performFind(currentFindQuery, true);
+            }
+        });
+
+        findPrevBtn.addEventListener('click', () => {
+            if (currentFindQuery) {
+                performFind(currentFindQuery, false);
+            }
+        });
+
+        findCloseBtn.addEventListener('click', async () => {
+            console.log('[FIND] Close button clicked!');
+            await closeFindWindow();
+        });
+
+        // Auto-focus input when window becomes visible
+        window.addEventListener('load', () => {
+            setTimeout(() => findInput.focus(), 100);
+        });
+
+        // Apply theme from settings
+        listen('settings-update', (event) => {
+            const settings = event.payload;
+            if (settings.theme === 'light') {
+                document.body.classList.add('light-theme');
+            } else {
+                document.body.classList.remove('light-theme');
+            }
+        });
+
+        // Load initial theme
+        (async () => {
+            try {
+                const settings = await invoke('get_settings');
+                if (settings.theme === 'light') {
+                    document.body.classList.add('light-theme');
+                }
+            } catch (e) {
+                console.error('Failed to load settings:', e);
+            }
+        })();
+
+        // Listen for match count results
+        console.log('[FIND] Setting up find-result event listener...');
+        listen('find-result', (event) => {
+            console.log('[FIND] Received find-result event:', event.payload);
+            const { found, currentMatch, totalMatches } = event.payload;
+
+            if (!found || totalMatches === 0) {
+                findMatchCount.textContent = 'No matches';
+                findMatchCount.style.color = '#ff6b6b';
+                findPrevBtn.disabled = true;
+                findNextBtn.disabled = true;
+            } else {
+                findMatchCount.textContent = `${currentMatch} of ${totalMatches}`;
+                findMatchCount.style.color = '#999';
+                findPrevBtn.disabled = false;
+                findNextBtn.disabled = false;
+            }
+        }).then(() => {
+            console.log('[FIND] Event listener registered!');
+        }).catch((e) => {
+            console.error('[FIND] Failed to register listener:', e);
+        });
+    </script>
+</body>
+</html>

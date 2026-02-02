@@ -6,7 +6,8 @@
     "main",
     "dropdown",
     "settings",
-    "suggestion"
+    "suggestion",
+    "find"
   ],
   "permissions": [
     "core:default",
@@ -18,6 +19,7 @@
     "core:window:allow-create",
     "core:window:allow-close",
     "core:event:allow-emit",
+    "core:event:allow-listen",
     "deep-link:default"
   ]
 }
